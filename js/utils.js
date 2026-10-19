@@ -1,38 +1,67 @@
-const Store = require('electron-store');
-const store = new Store();
-const fs = require('graceful-fs');
+const fs = require('fs');
 
-// 设置，比永久储存库多一个默认值，诶嘿 (<ゝω·)☆
+// 设置默认值由主进程的 electron-store 持久化。渲染进程不再各自创建
+// electron-store 实例，避免缓存不一致，也让主进程可以使用新版 ESM-only 库。
+const configDefaults = {
+    windowSizeMini: [300, 187],
+    windowSizeFeed: [650, 760],
+    windowSizeDefault: [375, 500],
+    opacity: 0.9999,
+    autoPause: false,
+    hideShortcut: 'Alt + Q',
+    playPauseShortcut: 'Alt + W',
+    webFullscreenShortcut: 'Alt + D',
+    focusWindowShortcut: 'Alt + S',
+    historyShortcut: 'Alt + A',
+    proxy: ''
+};
+
+let configStore = null;
+const isRenderer = process.type === 'renderer';
+
+function rendererIpc() {
+    return require('electron').ipcRenderer;
+}
+
 var config = {
     get(key) {
-        var val = store.get(key);
-        return val ? val : config[key];
+        if( isRenderer ) {
+            return rendererIpc().sendSync('config-get', key);
+        }
+        if( !configStore ) {
+            return configDefaults[key];
+        }
+        const value = configStore.get(key);
+        return value === undefined ? configDefaults[key] : value;
     },
     set(key, value) {
+        if( isRenderer ) {
+            return rendererIpc().sendSync('config-set', key, value);
+        }
         if( typeof key == 'object' ) {
             for( let k in key ) {
-                store.set(k, key[k]);
+                configStore.set(k, key[k]);
                 log.write({
                     message: `更新用户设置：SET ${k} = ${JSON.stringify(key[k])}`
                 });
             }
         } else {
-            store.set(key, value);
+            configStore.set(key, value);
             log.write({
                 message: `更新用户设置：SET ${key} = ${JSON.stringify(value)}`
             });
         }
     },
     delete(key) {
-        store.delete(key);
-    },
-    windowSizeMini: [300, 187],
-    windowSizeFeed: [650, 760],
-    windowSizeDefault: [375, 500],
-    opacity: 1,
-    autoPause: false,
-    hideShortcut: process.platform == 'darwin' ? 'Alt + W' : 'Ctrl + E',
-    proxy: ''
+        if( isRenderer ) {
+            return rendererIpc().sendSync('config-delete', key);
+        }
+        configStore.delete(key);
+    }
+};
+
+function attachConfigStore(store) {
+    configStore = store;
 }
 
 // ajax
@@ -107,15 +136,17 @@ var log = {
             _msg = `${now.format()} ${message}\r\n`;
         }
         if( obj.override ) {
-            fs.writeFile(logFileName, _msg);
+            fs.writeFileSync(logFileName, _msg);
         } else {
-            fs.appendFile(logFileName, _msg);
+            fs.appendFileSync(logFileName, _msg);
         }
     }
 }
 
 module.exports = {
     config,
+    configDefaults,
+    attachConfigStore,
     ajax,
     getVid,
     getVidWithP,

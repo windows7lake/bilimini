@@ -11,17 +11,41 @@
     <div id="config-list" class="list">
       <!-- 不透明度 -->
       <p class="list-title">窗口不透明度</p>
-      <div class="item item-range"><input type="range" class="range" v-model="opacity" min="0.1" max="1" step="0.01"></div>
-      <!-- 按下老板键时是否暂停 -->
-      <p class="list-title">按下老板键时自动暂停</p>
+      <div class="item item-range"><input type="range" class="range" v-model="opacity" min="0.1" max="0.9999" step="0.01"></div>
+      <!-- 隐藏窗口时是否暂停 -->
+      <p class="list-title">隐藏窗口时自动暂停</p>
       <label class="item" :class="{active: autoPause}">
-          <input type="checkbox" class="checkbox" v-model="autoPause" /> <span style="vertical-align: middle;">自动暂停</span>
+          <input type="checkbox" class="checkbox" v-model="autoPause" /> <span style="vertical-align: middle;">隐藏时暂停，显示时播放</span>
       </label>
       <!-- 老板键 -->
       <p class="list-title">老板键</p>
       <div class="item">
         <input type="text" class="input" v-model="hideShortcut">
         <span class="btn btn-submit" @click="saveHideShortcut">确定</span>
+      </div>
+      <!-- 播放/暂停快捷键 -->
+      <p class="list-title">播放/暂停快捷键</p>
+      <div class="item">
+        <input type="text" class="input" v-model="playPauseShortcut">
+        <span class="btn btn-submit" @click="savePlayPauseShortcut">确定</span>
+      </div>
+      <!-- 网页全屏快捷键 -->
+      <p class="list-title">网页全屏快捷键</p>
+      <div class="item">
+        <input type="text" class="input" v-model="webFullscreenShortcut">
+        <span class="btn btn-submit" @click="saveWebFullscreenShortcut">确定</span>
+      </div>
+      <!-- 窗口聚焦快捷键 -->
+      <p class="list-title">窗口聚焦快捷键</p>
+      <div class="item">
+        <input type="text" class="input" v-model="focusWindowShortcut">
+        <span class="btn btn-submit" @click="saveFocusWindowShortcut">确定</span>
+      </div>
+      <!-- 播放历史快捷键 -->
+      <p class="list-title">播放历史快捷键</p>
+      <div class="item">
+        <input type="text" class="input" v-model="historyShortcut">
+        <span class="btn btn-submit" @click="saveHistoryShortcut">确定</span>
       </div>
       <!-- 代理 -->
       <p class="list-title">代理设置</p>
@@ -35,8 +59,6 @@
   <script src="js/vue.min.js"></script>
   <script>
     const ipc = require('electron').ipcRenderer;
-    const remote = require('electron').remote;
-    const isAccelerator = require('electron-is-accelerator');
     const utils = require('./js/utils.js');
     const config = utils.config;
 
@@ -47,6 +69,10 @@
       data: {
         opacity: 1,
         hideShortcut: '',
+        playPauseShortcut: '',
+        webFullscreenShortcut: '',
+        focusWindowShortcut: '',
+        historyShortcut: '',
         proxy: '',
         autoPause: false,
       },
@@ -54,40 +80,48 @@
         opacity(val) {
           // 在不透明和透明间切换的瞬间，需要重新创建主窗口并切换模式
           if( lastOpacity == 1 && val < 1 || lastOpacity < 1 && val == 1 ) {
-            ipc.send('recreate-main-window');
+            ipc.send('recreate-main-window', val);
           } else {
-            ipc.send('set-opacity');
+            ipc.send('set-opacity', val);
           }
           lastOpacity = val;
           config.set('opacity', val);
         },
         autoPause(val) {
           config.set('autoPause', val);
+          ipc.send('set-auto-pause', val);
         }
       },
       methods: {
         closeWindow() {
-          remote.getCurrentWindow().hide();
+          ipc.send('hide-current-window');
         },
-        saveHideShortcut() {
-          var lastShortcut = config.get('hideShortcut'),
-              curShortcut = this.hideShortcut.split('+').map((c) => {
+        saveShortcut(key, property, eventName) {
+          var lastShortcut = config.get(key),
+              curShortcut = this[property].split('+').map((c) => {
                 let _c = c.trim().toLowerCase().split('');
                 _c[0] = _c[0].toUpperCase();
                 return _c.join('');
               }).join('+');
-          // 手动检查快捷键格式：
-          // 似乎随便瞎写一个字符串丢进globalShortcut.register会报错，而且这个错误还catch不到，必定会中断程序执行
-          // 所以只能在这里人工检查了
-          if( isAccelerator(curShortcut) ) {
-            this.hideShortcut = curShortcut.replace(/\+/g, ' + ');
-            config.set('hideShortcut', curShortcut);
-            ipc.send('update-hide-shortcut', lastShortcut);
-          } else {
-            this.hideShortcut = lastShortcut.replace(/\+/g, ' + ');
-            utils.error(`快捷键被检测为不合法 ${curShortcut}`);
-            alert('你输入的快捷键不合法！\n合法的快捷键组合应当类似于「ctrl+shift+e」。\n合法的修饰键包括Ctrl、Alt、Shift、Cmd（仅Mac）、Option（仅Mac，等同于Alt）。')
-          }
+          this[property] = curShortcut.replace(/\+/g, ' + ');
+          // 由主进程实际注册并验证快捷键：避免第三方语法解析器落后于
+          // Electron 的 Accelerator 规范；失败时会恢复为 lastShortcut。
+          ipc.send(eventName, lastShortcut, curShortcut);
+        },
+        saveHideShortcut() {
+          this.saveShortcut('hideShortcut', 'hideShortcut', 'update-hide-shortcut');
+        },
+        savePlayPauseShortcut() {
+          this.saveShortcut('playPauseShortcut', 'playPauseShortcut', 'update-play-pause-shortcut');
+        },
+        saveWebFullscreenShortcut() {
+          this.saveShortcut('webFullscreenShortcut', 'webFullscreenShortcut', 'update-web-fullscreen-shortcut');
+        },
+        saveFocusWindowShortcut() {
+          this.saveShortcut('focusWindowShortcut', 'focusWindowShortcut', 'update-focus-window-shortcut');
+        },
+        saveHistoryShortcut() {
+          this.saveShortcut('historyShortcut', 'historyShortcut', 'update-history-shortcut');
         },
         saveProxy() {
           config.set('proxy', this.proxy);
@@ -95,11 +129,34 @@
         }
       },
       mounted() {
-        this.opacity = lastOpacity = config.get('opacity');
+        const storedOpacity = Number(config.get('opacity'));
+        const opacity = Math.min(storedOpacity, 0.9999);
+        this.opacity = lastOpacity = opacity;
+        // 主进程会在创建窗口前迁移旧配置；这里仅保持设置页显示一致。
+        if( storedOpacity !== opacity ) {
+          config.set('opacity', opacity);
+        }
         this.hideShortcut = config.get('hideShortcut');
+        this.playPauseShortcut = config.get('playPauseShortcut');
+        this.webFullscreenShortcut = config.get('webFullscreenShortcut');
+        this.focusWindowShortcut = config.get('focusWindowShortcut');
+        this.historyShortcut = config.get('historyShortcut');
         this.proxy = config.get('proxy');
         this.autoPause = config.get('autoPause');
       }
+    });
+
+    ipc.on('shortcut-update-failed', (ev, { key, shortcut }) => {
+      const properties = {
+        hideShortcut: 'hideShortcut',
+        playPauseShortcut: 'playPauseShortcut',
+        webFullscreenShortcut: 'webFullscreenShortcut',
+        focusWindowShortcut: 'focusWindowShortcut',
+        historyShortcut: 'historyShortcut'
+      };
+      const property = properties[key];
+      v[property] = shortcut.replace(/\+/g, ' + ');
+      config.set(key, shortcut);
     });
 
     window.onerror = function(err, f, line) {

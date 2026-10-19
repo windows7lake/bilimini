@@ -18,7 +18,6 @@
 	<script src="js/vue.min.js"></script>
 	<script>
 		const ipc = require('electron').ipcRenderer;
-		const remote = require('electron').remote;
 		const v = new Vue({
 			el: '#wrapper',
 			data: {
@@ -36,7 +35,7 @@
 					ipc.send('select-bangumi-part', part);
 				},
 				closeWindow() {
-				  remote.getCurrentWindow().hide();
+				  ipc.send('hide-current-window');
 				}
 			}
 		});

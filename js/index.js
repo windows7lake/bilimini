@@ -1,21 +1,42 @@
 const ipc = require('electron').ipcRenderer;
-const remote = require('electron').remote;
-const dialog = remote.dialog;
 const shell = require('electron').shell;
 const appData = require('./package.json');
 const utils = require('./js/utils.js');
+const chromeVersion = process.versions.chrome || '152.0.0.0';
+const desktopPlatform = process.platform === 'darwin'
+  ? 'Macintosh; Intel Mac OS X 10_15_7'
+  : 'Windows NT 10.0; Win64; x64';
 const userAgent = {
-  desktop: 'bilimini Desktop like Mozilla/233 (Windows NT or OSX) AppleWebKit like Gecko or not (Chrome/99 and Safari/99 both OK)',
-  mobile: 'bilimini Mobile like (iPhone or Android) whatever AppleWebKit/124.50 Mobile/BI233'
+  // 使用 Electron 实际携带的 Chromium 版本，不能再伪造 Chrome/99，
+  // 否则 B 站会将客户端判定为不受支持的旧浏览器。
+  desktop: `Mozilla/5.0 (${desktopPlatform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`
 };
 const videoUrlPrefix = 'https://www.bilibili.com/video/';
 const liveUrlPrefix  = 'https://live.bilibili.com/blanc/';
+const historyUrl = 'https://www.bilibili.com/account/history';
 let wv, wrapper;
+let isProgrammaticNavigation = false;
+
+function loadWebview(url, options) {
+  // Electron 44 同样会为 loadURL 触发 will-navigate。标记这段期间的
+  // 导航，避免事件处理器再次拦截并加载同一 URL，造成 ERR_ABORTED 循环。
+  isProgrammaticNavigation = true;
+  return wv.loadURL(url, options).catch((err) => {
+    // 用户跳转、重定向和窗口关闭会中止上一条请求；Electron 44 将其作为
+    // Promise rejection 抛出，属于预期情况，不应显示为未捕获错误。
+    if( err && (err.errno === -3 || err.code === 'ERR_ABORTED') ) {
+      return;
+    }
+    utils.error(`Webview 加载失败：${url}\\n${err}`);
+  }).finally(() => {
+    isProgrammaticNavigation = false;
+  });
+}
 
 // 保存用户浏览记录
 let _lastNavigation = new Date();
 var _history = {
-  stack: ['https://m.bilibili.com/index.html'],
+  stack: ['https://www.bilibili.com/'],
   pos: 0,
   lastTarget: '', // 这是最后一次传入go方法的url
   lastLoadedUrl: '', // 这是最后一次webview实际加载完成的url，这个是在下面webview的did-finish-load事件的时候更新的
@@ -40,7 +61,7 @@ var _history = {
     _lastNavigation = now;
     if( vid ) {
       // case 1 普通视频播放页，转跳对应pc页
-      wv.loadURL(videoUrlPrefix + vid, {
+      loadWebview(videoUrlPrefix + vid, {
         userAgent: userAgent.desktop
       });
       !noNewHistory && _history.add(videoUrlPrefix + vid);
@@ -48,14 +69,14 @@ var _history = {
       utils.log(`路由：类型① 视频详情页\n原地址：${target}\n转跳地址：${videoUrlPrefix+vid}`);
     } else if( target.indexOf('bangumi/play/') > -1 ) {
       // case 2 番剧播放页
-      wv.loadURL(target, {
+      loadWebview(target, {
         userAgent: userAgent.desktop
       });
       !noNewHistory && _history.add(target);
       v.disableDanmakuButton = false;
       utils.log(`路由：类型② 番剧播放页\n地址：${target}`);
     } else if ( live = /live\.bilibili\.com\/(h5\/||blanc\/)?(\d+).*/.exec(target) ) {
-      wv.loadURL(liveUrlPrefix + live[2], {
+      loadWebview(liveUrlPrefix + live[2], {
         userAgent: userAgent.desktop
       });
       !noNewHistory && _history.add(liveUrlPrefix + live[2]);
@@ -63,8 +84,8 @@ var _history = {
       utils.log(`路由：类型③ 直播页面\n原地址：${target}\n转跳地址：${liveUrlPrefix+live[2]}`);
     } else {
       // 其他链接不做操作直接打开
-      wv.loadURL(target, {
-        userAgent: userAgent.mobile
+      loadWebview(target, {
+        userAgent: userAgent.desktop
       });
       !noNewHistory && _history.add(target);
       // 清除分p
@@ -79,7 +100,7 @@ var _history = {
     const vid = utils.getVid(wv.getURL());
     if(vid) {
       let url = `${videoUrlPrefix}${vid}/?p=${pid}`;
-      wv.loadURL(url, {
+      loadWebview(url, {
         userAgent: userAgent.desktop
       });
       _history.replace(url);
@@ -95,6 +116,16 @@ var _history = {
     _history.stack.length = _history.pos + 1;
     _history.stack.push(url);
     _history.pos++;
+  },
+  recordNavigation: function(url) {
+    // 用户在 webview 内点击链接时，不再取消原始导航再 loadURL 一次。
+    // 直接记录已发生的跳转，可避免 Electron 44 输出 ERR_ABORTED。
+    if( url === _history.stack[_history.pos] ) {
+      _history.lastTarget = url;
+      return;
+    }
+    _history.lastTarget = url;
+    _history.add(url);
   },
   replace: function(url) {
     _history.stack[_history.stack.length - 1] = url;
@@ -125,33 +156,41 @@ var _history = {
   }
 };
 
+function updateVideoParts(vid, parts) {
+  if( !Array.isArray(parts) || !parts.length ) {
+    ipc.send('update-part', null);
+    v.disablePartButton = true;
+    return;
+  }
+
+  ipc.send('update-part', parts.map((part, index) => part.part || part.title || `P${index + 1}`));
+  v.disablePartButton = parts.length <= 1;
+  utils.log(`获取视频 ${vid} 的分P数据成功，共 ${parts.length} P`);
+
+  // 多 P 视频加载完成后沿用原有行为，直接展示列表；之后可由 P 按钮开关它。
+  if( parts.length > 1 ) {
+    ipc.send('show-select-part-window');
+  }
+}
+
 function getPartOfVideo(vid) {
-  utils.ajax.get(videoUrlPrefix + vid, (res = '') => {
-    // 分 P 信息存储在 window.__INITIAL_STATE__= 中 根据 object 类型的特性最后一个 } 后面不会有 , ] } 使用正则匹配
-    const match = res.match(/window\.__INITIAL_STATE__\s*=\s*(\{.*?\})[^,\]\}]/m)
-    if (!match[1]) {
-      utils.log('获取番剧分p数据失败', res);
-      return false;
-    }
-    const json = JSON.parse(match[1]);
-    let parts;
+  // 页面中的 __INITIAL_STATE__ 已不再是稳定接口，使用视频详情 API 获取分 P 信息。
+  // BV 号与 av 号分别使用 bvid、aid 参数，避免把 "av" 前缀传给 aid。
+  const isBvid = /^BV/i.test(vid);
+  const id = isBvid ? vid : vid.replace(/^av/i, '');
+  const query = `${isBvid ? 'bvid' : 'aid'}=${encodeURIComponent(id)}`;
+
+  utils.ajax.get(`https://api.bilibili.com/x/web-interface/view?${query}`, (res = '') => {
     try {
-      parts = json.videoData.pages;
-    } catch(err) {
-      utils.log(`解析视频分p失败：${err}`, json);
-      return false;
-    }
-    utils.log(`获取视频 ${vid} 的分P数据成功`);
-    if( parts.length ) {
-      ipc.send('update-part', parts.map(p => p.part));
-      // 有超过1p时自动开启分p窗口
-      if( parts.length > 1 ) {
-        ipc.send('show-select-part-window');
-        v.disablePartButton = false;
+      const result = JSON.parse(res);
+      if( result.code !== 0 || !result.data ) {
+        throw new Error(result.message || `接口返回 ${result.code}`);
       }
-    } else {
-      ipc.send('update-part', null);
-      v.disablePartButton = true;
+      updateVideoParts(vid, result.data.pages);
+    } catch(err) {
+      // 接口异常时清空旧列表，避免点 P 跳到上一个视频的分集。
+      utils.error(`获取视频分P数据失败：${err}`);
+      updateVideoParts(vid, null);
     }
   });
 }
@@ -202,7 +241,7 @@ function getPartOfBangumi(url) {
 const v = new Vue({
   el: '#wrapper',
   data: {
-    version: remote.app.getVersion(),
+    version: appData.version,
     naviGotoTarget: '',
     naviGotoInputShow: false,
     naviCanGoBack: false,
@@ -223,7 +262,7 @@ const v = new Vue({
     },
     // 回到首页
     naviGoHome: function() {
-      _history.go('https://m.bilibili.com/index.html');
+      _history.go('https://www.bilibili.com/');
     },
     // 通过url或av号跳转
     naviGotoShow: function() {
@@ -301,8 +340,37 @@ const v = new Vue({
         return false;
       }
       utils.log('主窗口：点击弹幕开关');
-      // 2018-12-05 适配最新B站弹幕开关
-      wv.executeJavaScript(`document.querySelector('.bilibili-player-video-danmaku-switch .bui-switch-input').click()`);
+      // B 站播放器的 class 名经历过多次调整；播放器通常比 did-finish-load
+      // 更晚挂载，短暂重试避免首次打开视频时按钮看起来没有反应。
+      wv.executeJavaScript(`(() => {
+        const selectors = [
+          '.bilibili-player-video-danmaku-switch .bui-switch-input',
+          '.bpx-player-ctrl-dm input',
+          '.bpx-player-dm-switch input',
+          '[class*="danmaku"] input[type="checkbox"]',
+          '[class*="danmaku"] button'
+        ];
+        const toggle = () => {
+          const control = selectors.map((selector) => document.querySelector(selector)).find(Boolean);
+          if (!control) return false;
+          control.click();
+          return true;
+        };
+        if (toggle()) return Promise.resolve(true);
+        return new Promise((resolve) => {
+          let attempts = 0;
+          const timer = setInterval(() => {
+            attempts += 1;
+            const changed = toggle();
+            if (changed || attempts >= 12) {
+              clearInterval(timer);
+              resolve(changed);
+            }
+          }, 250);
+        });
+      })()`).then((changed) => {
+        if( !changed ) utils.log('弹幕开关：未找到播放器控件');
+      }).catch((err) => utils.error('弹幕开关失败：\n' + err));
     }
   }
 });
@@ -342,23 +410,21 @@ function checkUpdateOnInit() {
       currentVersionArr = appData.version.split('.'),
       currentVersion = currentVersionArr[0] * 10000 + currentVersionArr[1] * 100 + currentVersionArr[2];
     if( lastVersion > currentVersion ) {
-      dialog.showMessageBox(null, {
+      const response = ipc.sendSync('show-message-box', {
         buttons: buttons,
         message: `检查到新版本v${data.version}，您正在使用的版本是v${appData.version}，是否打开下载页面？`
-      }, (res, checkboxChecked) => {
-        if(res == order) {
-          shell.openExternal(`https://github.com/chitosai/bilimini/releases/tag/v${data.version}`);
-        }
       });
+      if(response == order) {
+        shell.openExternal(`https://github.com/chitosai/bilimini/releases/tag/v${data.version}`);
+      }
     }
     // 显示额外的公告
     if( data.announcement && data.announcement != '' && !localStorage.getItem(data.announcement) ) {
-      dialog.showMessageBox(null, {
+      ipc.sendSync('show-message-box', {
         buttons: ['了解'],
         message: data.announcement
-      }, () => {
-        localStorage.setItem(data.announcement, 1);
       });
+      localStorage.setItem(data.announcement, 1);
     }
   });
 }
@@ -367,6 +433,7 @@ function checkUpdateOnInit() {
 function saveWindowSizeOnResize() {
   var saveWindowSizeTimer;
   window.addEventListener('resize', function() {
+    fitWebviewToWindow();
     clearTimeout(saveWindowSizeTimer);
     saveWindowSizeTimer = setTimeout(function() {
       const currentSize = utils.config.get(currentWindowType);
@@ -376,6 +443,19 @@ function saveWindowSizeOnResize() {
       }
     }, 600);
   });
+}
+
+function fitWebviewToWindow() {
+  if( !wv ) {
+    return;
+  }
+  // 应用统一加载 B 站桌面站点；其页面以约 1280px 布局宽度设计。缩放
+  // webview 而非注入强制 CSS，可同时适配首页、视频、历史和控制栏。
+  const url = wv.getURL();
+  const zoom = /^https:\/\/(?:www|t|live)\.bilibili\.com\//.test(url)
+    ? Math.max(0.25, Math.min(1, window.innerWidth / 1280))
+    : 1;
+  wv.setZoomFactor(zoom);
 }
 
 // 根据用户访问的url决定app窗口尺寸
@@ -392,9 +472,9 @@ function resizeMainWindow() {
     targetWindowType = 'windowSizeDefault';
   }
   if( targetWindowType != currentWindowType ) {
-    let mw = remote.getCurrentWindow(),
-      currentSize = mw.getSize(),
-      leftTopPosition = mw.getPosition(),
+    let currentBounds = ipc.sendSync('get-current-window-bounds'),
+      currentSize = [currentBounds.width, currentBounds.height],
+      leftTopPosition = [currentBounds.x, currentBounds.y],
       rightBottomPosition = [leftTopPosition[0] + currentSize[0], leftTopPosition[1] + currentSize[1]],
       targetSize = utils.config.get(targetWindowType),
       targetPosition = [rightBottomPosition[0] - targetSize[0], rightBottomPosition[1] - targetSize[1]];
@@ -407,12 +487,12 @@ function resizeMainWindow() {
     }
     targetPosition[1] = targetPosition[1] > 10 ? targetPosition[1] : 10;
 
-    mw.setBounds({
+    ipc.send('set-current-window-bounds', {
       x: targetPosition[0],
       y: targetPosition[1],
       width: targetSize[0],
       height: targetSize[1]
-    }, true);
+    });
 
     currentWindowType = targetWindowType;
 
@@ -434,6 +514,8 @@ function initActionOnWebviewNavigate() {
     _history.lastLoadedUrl = url;
     // 改变窗口尺寸
     resizeMainWindow();
+    // resizeMainWindow 可能刚切换窗口尺寸，下一帧再读取宽度以得到正确缩放。
+    requestAnimationFrame(fitWebviewToWindow);
     // 关闭loading遮罩
     wrapper.classList.remove('loading');
     // 根据url格式判断是获取普通分p还是番剧分p
@@ -450,13 +532,20 @@ function initActionOnWebviewNavigate() {
     ipc.send('url-changed', url);
   });
   wv.addEventListener('will-navigate', function(e) {
+    if( isProgrammaticNavigation ) {
+      // 允许应用调用 loadURL 后的正常导航及服务端重定向继续执行。
+      return;
+    }
     if( e.url.startsWith('bilibili://') ) {
       utils.log(`网页端尝试拉起App: ${e.url}`);
       e.preventDefault();
       return false;
     } else {
       utils.log(`触发 will-navigate 事件，目标: ${e.url}`);
-      _history.go(e.url);
+      // 不调用 preventDefault：取消 guest 导航会在 Electron 44 的主进程中
+      // 产生 GUEST_VIEW_MANAGER_CALL / ERR_ABORTED。播放页仍切换为桌面 UA。
+      wv.setUserAgent(userAgent.desktop);
+      _history.recordNavigation(e.url);
     }
   });
   // b站mobile版看起来是改用pushstate做单页应用了，没法从webview上监听到will-navigate事件了
@@ -468,13 +557,17 @@ function initActionOnWebviewNavigate() {
     // 的最后一条数据对不上，而再次调用_history.go方法造成无法后退的情况
     if( nowUrl != _history.stack[_history.pos] && nowUrl != _history.lastLoadedUrl ) {
       utils.log(`Dirty-check检测到Webview的url改变，目标: ${nowUrl}`);
-      _history.go(nowUrl);
+      _history.recordNavigation(nowUrl);
     }
   }, 500);
-  // webview中点击target="_blank"的链接时在当前webview打开
-  wv.addEventListener('new-window', function(e) {
-    utils.log(`触发 new-window 事件，目标: ${e.url}`);
-    _history.go(e.url);
+}
+
+// 主进程通过 setWindowOpenHandler 捕获网页 target=_blank，再让当前 webview
+// 加载目标地址，兼容 Electron 44 已废弃的 new-window 事件。
+function initActionOnWebviewOpen() {
+  ipc.on('webview-open-url', (ev, url) => {
+    utils.log(`打开 webview 新窗口链接：${url}`);
+    _history.go(url);
   });
 }
 
@@ -514,25 +607,40 @@ function initWebviewVolumeContrlShortcuts() {
   });
 }
 
-// 用户按老板键触发隐藏时自动停止播放视频
-function initActionOnBossButtonPressed() {
-  ipc.on('hide-hide-hide', () => {
-    if (utils.config.get('autoPause')) {
-      wv.send('hide-hide-hide');
-    }
+// 主窗口隐藏时暂停视频，重新显示时恢复播放。
+function initActionOnWindowVisibility() {
+  ipc.on('set-auto-playback', (ev, shouldPlay) => {
+    wv.send('set-playback-state', shouldPlay);
+  });
+}
+
+function initActionOnPlaybackShortcut() {
+  ipc.on('toggle-playback', () => {
+    wv.send('toggle-playback');
+  });
+}
+
+function initActionOnWebFullscreenShortcut() {
+  ipc.on('toggle-web-fullscreen', () => {
+    wv.send('toggle-web-fullscreen');
+  });
+}
+
+function initActionOnHistoryShortcut() {
+  ipc.on('open-recent-history', () => {
+    _history.go(historyUrl);
   });
 }
 
 // windows下frameless window没法正确检测到mouseout事件，只能根据光标位置做个dirtyCheck了
 function initMouseStateDirtyCheck() {
   // 统一改为由js判断，一旦鼠标进入主窗口的上较近才显示topbar
-  var getMousePosition = remote.screen.getCursorScreenPoint,
-    mw = remote.getCurrentWindow(), 
-    lastStatus = 'OUT';
+  var lastStatus = 'OUT';
   setInterval(function() {
-    let mousePos = getMousePosition(),
-      windowPos = mw.getPosition(),
-      windowSize = mw.getSize();
+    let mousePos = ipc.sendSync('get-cursor-screen-point'),
+      bounds = ipc.sendSync('get-current-window-bounds'),
+      windowPos = [bounds.x, bounds.y],
+      windowSize = [bounds.width, bounds.height];
     // 在窗口最右边留出滚动条的宽度，用户操作滚动条时不会触发showTopbar；
     // 但是如果showTopbar已经触发，即用户已经在操作工具栏了，那么就暂时屏蔽这个规则
     function getTriggerAreaWidth() {
@@ -578,14 +686,24 @@ window.addEventListener('DOMContentLoaded', function() {
   detectPlatform();
   checkUpdateOnInit();
   initActionOnWebviewNavigate();
+  initActionOnWebviewOpen();
   initActionOnEsc();
-  initActionOnBossButtonPressed();
+  initActionOnWindowVisibility();
+  initActionOnPlaybackShortcut();
+  initActionOnWebFullscreenShortcut();
+  initActionOnHistoryShortcut();
   initWebviewVolumeContrlShortcuts();
   saveWindowSizeOnResize();
   initMouseStateDirtyCheck();
   openWebviewConsoleOnMenuClick();
   redirectOnSelectPart();
   logWebviewError();
+  // 初始 webview 先停在 about:blank，等 guest 页面就绪后再加载首页；
+  // Electron 44 不允许在 webview 的 dom-ready 之前调用 loadURL。
+  wv.addEventListener('dom-ready', function loadInitialHome() {
+    wv.removeEventListener('dom-ready', loadInitialHome);
+    loadWebview('https://www.bilibili.com/', { userAgent: userAgent.desktop });
+  });
 });
 
 window.onerror = function(err, f, line) {

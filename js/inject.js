@@ -1,6 +1,80 @@
 const ipc = require('electron').ipcRenderer;
 
+function openPlaybackLinkInHost(url) {
+  let target;
+  try {
+    target = new URL(url, window.location.href).href;
+  } catch(err) {
+    return false;
+  }
+  if( !/(?:www\.)?bilibili\.com\/(?:video\/|bangumi\/play\/)|live\.bilibili\.com\//i.test(target) ) {
+    return false;
+  }
+  ipc.send('open-webview-url', target);
+  return true;
+}
+
+// 桌面首页的卡片有时由前端脚本处理点击，不一定触发 will-navigate 或
+// window.open。捕获阶段直接接管播放器链接，确保能在当前 mini 窗口播放。
+document.addEventListener('click', (event) => {
+  if( event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey ) {
+    return;
+  }
+  const path = event.composedPath ? event.composedPath() : [];
+  const anchor = path.find((node) => node && node.tagName === 'A' && node.href);
+  if( anchor && openPlaybackLinkInHost(anchor.href) ) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+}, true);
+
 window.addEventListener('DOMContentLoaded', function() {
+  function setPlaybackState(shouldPlay) {
+    const video = document.querySelector('video');
+    if( !video ) {
+      return;
+    }
+    if( shouldPlay && video.paused ) {
+      video.play().catch(() => {});
+    } else if( !shouldPlay && !video.paused ) {
+      video.pause();
+    }
+  }
+
+  ipc.on('toggle-playback', () => {
+    const video = document.querySelector('video');
+    if( !video ) {
+      return;
+    }
+    setPlaybackState(video.paused);
+  });
+
+  ipc.on('set-playback-state', (ev, shouldPlay) => {
+    setPlaybackState(shouldPlay);
+  });
+
+  ipc.on('toggle-web-fullscreen', () => {
+    // 优先调用 B 站自己的“网页全屏”控制，它会同步隐藏页面周边内容；
+    // 不同播放器版本的 class 名不同，保留标准 Fullscreen API 作为回退。
+    const selectors = [
+      '.bpx-player-ctrl-web',
+      '.bilibili-player-video-web-fullscreen',
+      '[class*="player-iconfont-web-fullscreen"]',
+      '[class*="pagefullscreen"]'
+    ];
+    const button = selectors.map((selector) => document.querySelector(selector)).find(Boolean);
+    if( button ) {
+      button.click();
+      return;
+    }
+    if( document.fullscreenElement ) {
+      document.exitFullscreen().catch(() => {});
+      return;
+    }
+    const video = document.querySelector('video');
+    video && video.requestFullscreen && video.requestFullscreen().catch(() => {});
+  });
+
   // 普通视频页：自动最大化播放器
   if( window.location.href.indexOf('video/av') > -1 || 
       window.location.href.indexOf('video/BV') > -1 ||
@@ -25,15 +99,6 @@ window.addEventListener('DOMContentLoaded', function() {
           });
           let volume = document.querySelector('.bilibili-player-iconfont-volume-max');
           volume.dispatchEvent(event);
-        });
-        // 用户按了老板键，停止播放视频
-        ipc.on('hide-hide-hide', () => {
-          const player = document.querySelector('.bilibili-player-video');
-          const playButton = document.querySelector('.bilibili-player-video-btn-start');
-          // 只有当视频处在播放状态时才click一下来停止播放，如果本来就停止了就别点了
-          if (player && !Array.from(playButton.classList).includes('video-state-pause')) {
-            player.click();
-          }
         });
         clearInterval(playerInitCheck);
       } else if( ++checkCount > 100 ) {
