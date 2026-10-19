@@ -47,6 +47,18 @@
         <input type="text" class="input" v-model="historyShortcut">
         <span class="btn btn-submit" @click="saveHistoryShortcut">确定</span>
       </div>
+      <!-- 提高播放倍速快捷键 -->
+      <p class="list-title">提高播放倍速快捷键</p>
+      <div class="item">
+        <input type="text" class="input" v-model="increasePlaybackRateShortcut">
+        <span class="btn btn-submit" @click="saveIncreasePlaybackRateShortcut">确定</span>
+      </div>
+      <!-- 降低播放倍速快捷键 -->
+      <p class="list-title">降低播放倍速快捷键</p>
+      <div class="item">
+        <input type="text" class="input" v-model="decreasePlaybackRateShortcut">
+        <span class="btn btn-submit" @click="saveDecreasePlaybackRateShortcut">确定</span>
+      </div>
       <!-- 代理 -->
       <p class="list-title">代理设置</p>
       <div class="item">
@@ -73,6 +85,8 @@
         webFullscreenShortcut: '',
         focusWindowShortcut: '',
         historyShortcut: '',
+        increasePlaybackRateShortcut: '',
+        decreasePlaybackRateShortcut: '',
         proxy: '',
         autoPause: false,
       },
@@ -123,6 +137,12 @@
         saveHistoryShortcut() {
           this.saveShortcut('historyShortcut', 'historyShortcut', 'update-history-shortcut');
         },
+        saveIncreasePlaybackRateShortcut() {
+          this.saveShortcut('increasePlaybackRateShortcut', 'increasePlaybackRateShortcut', 'update-increase-playback-rate-shortcut');
+        },
+        saveDecreasePlaybackRateShortcut() {
+          this.saveShortcut('decreasePlaybackRateShortcut', 'decreasePlaybackRateShortcut', 'update-decrease-playback-rate-shortcut');
+        },
         saveProxy() {
           config.set('proxy', this.proxy);
           ipc.send('set-proxy');
@@ -141,6 +161,8 @@
         this.webFullscreenShortcut = config.get('webFullscreenShortcut');
         this.focusWindowShortcut = config.get('focusWindowShortcut');
         this.historyShortcut = config.get('historyShortcut');
+        this.increasePlaybackRateShortcut = config.get('increasePlaybackRateShortcut');
+        this.decreasePlaybackRateShortcut = config.get('decreasePlaybackRateShortcut');
         this.proxy = config.get('proxy');
         this.autoPause = config.get('autoPause');
       }
@@ -152,7 +174,9 @@
         playPauseShortcut: 'playPauseShortcut',
         webFullscreenShortcut: 'webFullscreenShortcut',
         focusWindowShortcut: 'focusWindowShortcut',
-        historyShortcut: 'historyShortcut'
+        historyShortcut: 'historyShortcut',
+        increasePlaybackRateShortcut: 'increasePlaybackRateShortcut',
+        decreasePlaybackRateShortcut: 'decreasePlaybackRateShortcut'
       };
       const property = properties[key];
       v[property] = shortcut.replace(/\+/g, ' + ');

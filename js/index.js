@@ -626,6 +626,12 @@ function initActionOnWebFullscreenShortcut() {
   });
 }
 
+function initActionOnPlaybackRateShortcut() {
+  ipc.on('change-playback-rate', (ev, amount) => {
+    wv.send('change-playback-rate', amount);
+  });
+}
+
 function initActionOnHistoryShortcut() {
   ipc.on('open-recent-history', () => {
     _history.go(historyUrl);
@@ -691,6 +697,7 @@ window.addEventListener('DOMContentLoaded', function() {
   initActionOnWindowVisibility();
   initActionOnPlaybackShortcut();
   initActionOnWebFullscreenShortcut();
+  initActionOnPlaybackRateShortcut();
   initActionOnHistoryShortcut();
   initWebviewVolumeContrlShortcuts();
   saveWindowSizeOnResize();

@@ -53,6 +53,18 @@ window.addEventListener('DOMContentLoaded', function() {
     setPlaybackState(shouldPlay);
   });
 
+  ipc.on('change-playback-rate', (ev, amount) => {
+    const video = document.querySelector('video');
+    const delta = Number(amount);
+    if( !video || !Number.isFinite(delta) ) {
+      return;
+    }
+    // B 站播放器会监听 video 的 ratechange 事件并同步更新控制栏。使用
+    // 0.05x 的颗粒度，兼顾精细调速与自定义倍速视频。
+    const nextRate = Math.max(0.25, Math.min(4, Math.round((video.playbackRate + delta) * 100) / 100));
+    video.playbackRate = nextRate;
+  });
+
   ipc.on('toggle-web-fullscreen', () => {
     // 优先调用 B 站自己的“网页全屏”控制，它会同步隐藏页面周边内容；
     // 不同播放器版本的 class 名不同，保留标准 Fullscreen API 作为回退。
@@ -74,6 +86,37 @@ window.addEventListener('DOMContentLoaded', function() {
     const video = document.querySelector('video');
     video && video.requestFullscreen && video.requestFullscreen().catch(() => {});
   });
+
+  // B 站当前的 AI 中文字幕轨使用 data-lan="ai-zh"。字幕菜单通常会在
+  // 点击控制栏按钮后才挂载，因此先直接选择，找不到时再打开菜单并短暂重试。
+  function enableAiChineseSubtitle() {
+    if( !/bilibili\.com\/(?:video\/|bangumi\/play\/)/.test(location.href) ) {
+      return;
+    }
+    let attempts = 0;
+    const maxAttempts = 30;
+    const timer = setInterval(() => {
+      const aiChinese = document.querySelector('[data-lan="ai-zh"]');
+      if( aiChinese ) {
+        aiChinese.click();
+        clearInterval(timer);
+        return;
+      }
+      // 不同播放器版本使用不同的字幕控制类名，保留语义选择器作为回退。
+      const trigger = document.querySelector(
+        '.bpx-player-ctrl-subtitle, .bpx-player-ctrl-subtitle-button, ' +
+        '[class*="player-ctrl"][class*="subtitle"], [aria-label*="字幕"], [title*="字幕"]'
+      );
+      if( trigger && attempts % 6 === 0 ) {
+        trigger.click();
+      }
+      attempts += 1;
+      if( attempts >= maxAttempts ) {
+        clearInterval(timer);
+      }
+    }, 500);
+  }
+  enableAiChineseSubtitle();
 
   // 普通视频页：自动最大化播放器
   if( window.location.href.indexOf('video/av') > -1 || 

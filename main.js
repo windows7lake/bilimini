@@ -166,7 +166,7 @@ var configWindow = null;
 function initConfigWindow() {
   utils.log('设置窗口：开始创建');
   configWindow = new electron.BrowserWindow({
-    width: 200, height: 490, frame: false, show: false,
+    width: 200, height: 610, frame: false, show: false,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -299,6 +299,11 @@ function initRendererIpc() {
   ipc.on('config-delete', (event, key) => {
     utils.config.delete(key);
     event.returnValue = true;
+  });
+  ipc.on('write-log', (event, entry) => {
+    if( entry && typeof entry.message === 'string' ) {
+      utils.log(entry.message, entry.data, entry.override);
+    }
   });
   ipc.on('hide-current-window', (event) => {
     const window = electron.BrowserWindow.fromWebContents(event.sender);
@@ -555,6 +560,18 @@ function bindHistoryShortcut(shortcut = utils.config.get('historyShortcut'), isU
   }, isUpdate);
 }
 
+function bindIncreasePlaybackRateShortcut(shortcut = utils.config.get('increasePlaybackRateShortcut'), isUpdate) {
+  return registerGlobalShortcut(shortcut, '提高播放倍速快捷键', () => {
+    mainWindow && mainWindow.webContents.send('change-playback-rate', 0.05);
+  }, isUpdate);
+}
+
+function bindDecreasePlaybackRateShortcut(shortcut = utils.config.get('decreasePlaybackRateShortcut'), isUpdate) {
+  return registerGlobalShortcut(shortcut, '降低播放倍速快捷键', () => {
+    mainWindow && mainWindow.webContents.send('change-playback-rate', -0.05);
+  }, isUpdate);
+}
+
 function updateGlobalShortcut(event, key, previous, next, bind) {
   globalShortcut.unregister(previous);
   utils.config.set(key, next);
@@ -581,9 +598,17 @@ function initGlobalShortcut() {
   ipc.on('update-history-shortcut', (ev, previous, next) => {
     updateGlobalShortcut(ev, 'historyShortcut', previous, next, bindHistoryShortcut);
   });
+  ipc.on('update-increase-playback-rate-shortcut', (ev, previous, next) => {
+    updateGlobalShortcut(ev, 'increasePlaybackRateShortcut', previous, next, bindIncreasePlaybackRateShortcut);
+  });
+  ipc.on('update-decrease-playback-rate-shortcut', (ev, previous, next) => {
+    updateGlobalShortcut(ev, 'decreasePlaybackRateShortcut', previous, next, bindDecreasePlaybackRateShortcut);
+  });
   bindHideShortcut();
   bindPlayPauseShortcut();
   bindWebFullscreenShortcut();
   bindFocusWindowShortcut();
   bindHistoryShortcut();
+  bindIncreasePlaybackRateShortcut();
+  bindDecreasePlaybackRateShortcut();
 }

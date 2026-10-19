@@ -7,7 +7,9 @@
     "start": "electron .",
     "win64": "./node_modules/.bin/electron-builder --x64",
     "win32": "./node_modules/.bin/electron-builder --ia32",
-    "mac": "./node_modules/.bin/electron-builder --mac",
+    "mac": "npm run mac:build && npm run verify:mac",
+    "mac:build": "./node_modules/.bin/electron-builder --mac",
+    "verify:mac": "codesign --verify --deep --strict --verbose=4 dist/mac-arm64/bilimini.app",
     "linux": "./node_modules/.bin/electron-builder --linux appimage"
   },
   "repository": "https://github.com/chitosai/bilimini",
@@ -18,7 +20,11 @@
   },
   "build": {
     "mac": {
-      "category": "Network"
+      "category": "Network",
+      "target": [
+        "dmg"
+      ],
+      "identity": "-"
     },
     "linux": {
       "category": "Network",

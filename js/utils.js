@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 
 // 设置默认值由主进程的 electron-store 持久化。渲染进程不再各自创建
 // electron-store 实例，避免缓存不一致，也让主进程可以使用新版 ESM-only 库。
@@ -13,6 +14,8 @@ const configDefaults = {
     webFullscreenShortcut: 'Alt + D',
     focusWindowShortcut: 'Alt + S',
     historyShortcut: 'Alt + A',
+    increasePlaybackRateShortcut: 'Alt+Up',
+    decreasePlaybackRateShortcut: 'Alt+Down',
     proxy: ''
 };
 
@@ -80,14 +83,20 @@ var ajax = {
     }
 }
 
-function getAppPath() {
-    const slash = require('path').sep;
-    var logFilePath = __dirname.split(slash);
-    logFilePath.length = logFilePath.lastIndexOf('bilimini') + 1;
-    logFilePath.push('');
-    return logFilePath.join(slash);
+function getLogFileName() {
+    // 打包后的 __dirname 位于 app.asar 内，不能再靠目录名推导日志路径。
+    // Finder 启动时的当前目录也不可写，因此主进程统一使用 Electron 的
+    // userData 目录；开发模式或 Electron 不可用时才退回当前目录。
+    try {
+        const electron = require('electron');
+        if( electron.app && typeof electron.app.getPath === 'function' ) {
+            return path.join(electron.app.getPath('userData'), 'bilimini.log');
+        }
+    } catch(err) {
+        // 让下面的开发环境回退逻辑继续执行。
+    }
+    return path.join(process.cwd(), 'bilimini.log');
 }
-const appPath = getAppPath();
 
 function getVidWithP(url) {
     const m  = /video\/(av\d+(?:\/?\?p=\d+)?)/.exec(url) ||
@@ -121,10 +130,20 @@ Date.prototype.format = function() {
 }
 var log = {
     write(obj) {
-        var logFileName = appPath + 'bilimini.log',
-            now = new Date();
-            _msg = '',
-            LF = '\r\n' + ' '.repeat(23);
+        // 远程页面和子窗口无权向应用目录写入文件。由主进程落盘可同时
+        // 避免沙箱权限问题，并保证所有日志写到同一个位置。
+        if( isRenderer ) {
+            try {
+                rendererIpc().send('write-log', obj);
+            } catch(err) {
+                console.error('写入日志失败', err);
+            }
+            return;
+        }
+        const logFileName = getLogFileName();
+        const now = new Date();
+        let _msg = '';
+        const LF = '\r\n' + ' '.repeat(23);
         // 让每个换行前都空出33个字符的距离，这样能让message对齐
         var message = obj.message.replace(/\n/g, LF);
         if( obj.data ) {
@@ -135,10 +154,16 @@ var log = {
         } else {
             _msg = `${now.format()} ${message}\r\n`;
         }
-        if( obj.override ) {
-            fs.writeFileSync(logFileName, _msg);
-        } else {
-            fs.appendFileSync(logFileName, _msg);
+        try {
+            fs.mkdirSync(path.dirname(logFileName), { recursive: true });
+            if( obj.override ) {
+                fs.writeFileSync(logFileName, _msg);
+            } else {
+                fs.appendFileSync(logFileName, _msg);
+            }
+        } catch(err) {
+            // 日志绝不能反过来阻止应用启动。
+            console.error(`写入日志失败：${logFileName}`, err);
         }
     }
 }
