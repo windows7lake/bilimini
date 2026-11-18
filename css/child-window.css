@@ -20,11 +20,24 @@ body {
   width: 14px;
   height: 14px;
   position: absolute;
-  top: 10px;
+  top: 7px;
   right: 5px;
+  -webkit-app-region: no-drag;
+  z-index: 1;
 }
 #close:hover {
   background: #fff;
+}
+#config-dragzone {
+  -webkit-app-region: drag;
+  box-sizing: border-box;
+  color: #ffacbf;
+  cursor: move;
+  height: 28px;
+  line-height: 28px;
+  padding: 0 10px;
+  position: relative;
+  user-select: none;
 }
 .list {
   padding: 5px;
@@ -33,6 +46,32 @@ body {
   color: #fff;
   font-weight: bold;
   margin: 5px;
+}
+.shortcut-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 5px;
+}
+.shortcut-setting .list-title {
+  margin-top: 5px;
+}
+.shortcut-setting .item {
+  display: flex;
+  gap: 3px;
+  line-height: 1.6em;
+}
+.shortcut-setting .input {
+  box-sizing: border-box;
+  height: 1.6em;
+  min-width: 0;
+  width: 100%;
+}
+.shortcut-setting .btn-submit {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  height: 1.6em;
+  line-height: 1.4em;
+  padding: 0 5px;
 }
 .item {
   border-radius: 3px;
@@ -104,4 +143,53 @@ body {
   background-color: rgba(255, 255, 255, .5);
   border: 5px solid black;
   vertical-align: middle;
+}
+
+/* 链接收藏列表 */
+.favorites-list {
+  box-sizing: border-box;
+  height: calc(100vh - 28px);
+  overflow-y: auto;
+}
+.fav-empty {
+  color: #fff;
+  line-height: 1.8em;
+  padding: 12px 8px;
+}
+.fav-item {
+  border-bottom: 1px solid rgba(255, 255, 255, .18);
+  line-height: 1.5em;
+  padding: 6px 36px 6px 8px;
+  position: relative;
+  white-space: normal;
+}
+.fav-title {
+  color: #fff;
+  font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fav-url {
+  color: #ffd0db;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fav-delete {
+  border-radius: 8px;
+  color: #ffacbf;
+  font-size: 10px;
+  line-height: 16px;
+  position: absolute;
+  right: 6px;
+  top: 12px;
+  text-align: center;
+  width: 26px;
+  height: 16px;
+}
+.fav-delete:hover {
+  background: #f25d8e;
+  color: #fff;
 }

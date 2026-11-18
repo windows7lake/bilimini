@@ -6,6 +6,7 @@ const globalShortcut = electron.globalShortcut;
 const Menu = electron.Menu;
 const screen = electron.screen;
 const session = electron.session;
+const clipboard = electron.clipboard;
 const utils = require('./js/utils.js');
 
 // 保留旧版渲染进程架构的兼容设置。窗口与系统 API 均通过 IPC 调用，
@@ -25,6 +26,7 @@ process.on('uncaughtException', (err) => {
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically hen the JavaScript object is garbage collected.
 var mainWindow = null, mainWindowIsClosed = null;
+let lastPageZoomShortcutAt = 0;
 function openMainWindow() {
   utils.log('主窗口：开始创建');
   if( mainWindow ) {
@@ -70,6 +72,28 @@ function openMainWindow() {
       }
       return { action: 'deny' };
     });
+    // 部分键盘布局不会把 Alt++ 交给 globalShortcut。webview 聚焦时直接按
+    // 物理按键兜底，同时延迟一帧避免与已成功触发的全局快捷键重复执行。
+    guestWebContents.on('before-input-event', (inputEvent, input) => {
+      if( input.type !== 'keyDown' || !input.alt || input.control || input.meta ) {
+        return;
+      }
+      const direction = input.code === 'Minus' && input.shift
+        ? -1
+        : input.code === 'Equal' && input.shift
+          ? 1
+          : 0;
+      if( !direction ) {
+        return;
+      }
+      inputEvent.preventDefault();
+      const capturedAt = Date.now();
+      setTimeout(() => {
+        if( lastPageZoomShortcutAt < capturedAt ) {
+          sendPageZoom(direction);
+        }
+      }, 0);
+    });
   });
   mainWindow.loadURL('file://' + __dirname + '/index.html');
   mainWindow.setAlwaysOnTop(true, 'torn-off-menu');
@@ -108,9 +132,10 @@ function initMainWindow() {
   });
   ipc.on('close-main-window', () => {
     if( platform == 'darwin' ) {
-      mainWindow && !mainWindow.isDestroyed() && mainWindow.close();
-      selectPartWindow && !selectPartWindow.isDestroyed() && selectPartWindow.hide();
-      configWindow && !configWindow.isDestroyed() && configWindow.hide();
+        mainWindow && !mainWindow.isDestroyed() && mainWindow.close();
+        selectPartWindow && !selectPartWindow.isDestroyed() && selectPartWindow.hide();
+        favoritesWindow && !favoritesWindow.isDestroyed() && favoritesWindow.hide();
+        configWindow && !configWindow.isDestroyed() && configWindow.hide();
     } else {
       app.quit();
     }
@@ -161,12 +186,72 @@ function showSelectPartWindow() {
   selectPartWindow.show();
 }
 
+// 初始化链接收藏窗口
+var favoritesWindow = null;
+function initFavoritesWindow() {
+  utils.log('收藏窗口：开始创建');
+  favoritesWindow = new electron.BrowserWindow({
+    width: 340, height: 420, frame: false, show: false,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+      sandbox: false
+    }
+  });
+  favoritesWindow.loadURL('file://' + __dirname + '/favorites.html');
+  favoritesWindow.setAlwaysOnTop(true, 'modal-panel');
+  favoritesWindow.on('closed', () => {
+    favoritesWindow = null;
+    utils.log('收藏窗口：已关闭');
+  });
+  utils.log('收藏窗口：已创建');
+  ipc.on('toggle-favorites-window', () => {
+    if( favoritesWindow && favoritesWindow.isVisible() ) {
+      favoritesWindow.hide();
+    } else {
+      showFavoritesWindow();
+    }
+  });
+  ipc.on('show-favorites-window', showFavoritesWindow);
+  // 收藏窗口专用关闭消息：不依赖 fromWebContents 推断窗口，避免事件被误判。
+  ipc.on('hide-favorites-window', () => {
+    utils.log('收藏窗口：收到关闭请求');
+    if( favoritesWindow && !favoritesWindow.isDestroyed() ) {
+      favoritesWindow.hide();
+      utils.log('收藏窗口：已隐藏');
+    }
+  });
+  // 收藏项变更时刷新已打开的列表
+  ipc.on('favorites-changed', () => {
+    favoritesWindow && !favoritesWindow.isDestroyed() &&
+      favoritesWindow.webContents.send('reload-favorites');
+  });
+}
+
+function showFavoritesWindow() {
+  utils.log('收藏窗口：打开');
+  if( !mainWindow || !favoritesWindow || mainWindow.isDestroyed() || favoritesWindow.isDestroyed() ) {
+    return;
+  }
+  var p = mainWindow.getPosition(), s = mainWindow.getSize(),
+      fs = favoritesWindow.getSize(),
+      area = screen.getDisplayMatching(mainWindow.getBounds()).workArea;
+  // 默认放在主窗口右侧；靠近屏幕边缘时改放左侧或贴边，避免窗口跑到屏幕外。
+  var x = p[0] + s[0] + 10;
+  if( x + fs[0] > area.x + area.width ) {
+    x = p[0] - fs[0] - 10;
+  }
+  var y = Math.min(p[1], area.y + area.height - fs[1]);
+  favoritesWindow.setPosition(Math.round(Math.max(area.x, x)), Math.round(Math.max(area.y, y)));
+  favoritesWindow.show();
+}
+
 // 初始化设置窗口
 var configWindow = null;
 function initConfigWindow() {
   utils.log('设置窗口：开始创建');
   configWindow = new electron.BrowserWindow({
-    width: 200, height: 610, frame: false, show: false,
+    width: 430, height: 500, frame: false, show: false,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -221,6 +306,13 @@ function initExchangeMessageForRenderers() {
   ipc.on('url-changed', (ev, args) => {
     selectPartWindow && selectPartWindow.webContents.send('url-changed', args);
   });
+  // 收藏列表点击链接：交给主窗口在当前 webview 打开
+  ipc.on('open-favorite-url', (ev, url) => {
+    if( typeof url === 'string' && /^https?:\/\//i.test(url) ) {
+      utils.log(`收藏：跳转 ${url}`);
+      mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.send('webview-open-url', url);
+    }
+  });
   // 转发选p消息
   ipc.on('select-part', (ev, args) => {
     mainWindow && mainWindow.webContents.send('select-part', args);
@@ -245,6 +337,9 @@ function initActionOnMessage() {
   ipc.on('main-window-resized', (ev, pos, size) => {
     if( selectPartWindow.isVisible() ) {
       showSelectPartWindow();
+    }
+    if( favoritesWindow && favoritesWindow.isVisible() ) {
+      showFavoritesWindow();
     }
     if( configWindow.isVisible() ) {
       showConfigWindow();
@@ -305,8 +400,27 @@ function initRendererIpc() {
       utils.log(entry.message, entry.data, entry.override);
     }
   });
+  // webview 注入脚本的点击决策日志，便于排查按钮无响应问题。
+  ipc.on('webview-debug', (event, msg) => {
+    utils.log(`[点击] ${msg}`);
+  });
+  // 剪贴板 API 只在主进程可用，渲染进程通过此 IPC 写入文本。
+  ipc.on('copy-text', (event, text) => {
+    if( typeof text !== 'string' ) {
+      event.returnValue = false;
+      return;
+    }
+    try {
+      clipboard.writeText(text);
+      event.returnValue = true;
+    } catch(err) {
+      utils.error(`主进程：写入剪贴板失败\n${err}`);
+      event.returnValue = false;
+    }
+  });
   ipc.on('hide-current-window', (event) => {
     const window = electron.BrowserWindow.fromWebContents(event.sender);
+    utils.log(`子窗口：请求隐藏当前窗口 ${window ? window.getURL() : '未知'}`);
     window && window.hide();
   });
   // webview 预加载脚本捕获到的视频卡片点击统一交给主窗口路由。
@@ -342,6 +456,7 @@ function init() {
   initMenu();
   initMainWindow();
   initSelectPartWindow();
+  initFavoritesWindow();
   initConfigWindow();
   initActionOnMessage();
   setProxy();
@@ -372,7 +487,15 @@ async function bootstrap() {
   // electron-store 从 v9 起只提供 ESM；在主进程异步加载后再创建窗口，
   // 同时仍为旧版 CommonJS 渲染层提供同步 IPC 配置接口。
   const { default: Store } = await import('electron-store');
-  utils.attachConfigStore(new Store({ defaults: utils.configDefaults }));
+  const configStore = new Store({ defaults: utils.configDefaults });
+  utils.attachConfigStore(configStore);
+  // 2.0.0 首版使用 Alt+Plus；改为等价且可稳定识别的物理按键表达式。
+  if( configStore.get('zoomInShortcut') === 'Alt+Plus' ) {
+    configStore.set('zoomInShortcut', 'Alt+Shift+=');
+  }
+  if( configStore.get('zoomOutShortcut') === 'Alt+-' ) {
+    configStore.set('zoomOutShortcut', 'Alt+Shift+-');
+  }
   await app.whenReady();
   try {
     await enableBilibiliDarkTheme();
@@ -513,6 +636,7 @@ function bindHideShortcut(shortcut = utils.config.get('hideShortcut'), isUpdate)
       if( mainWindow.isVisible() ) {
         mainWindow.hide();
         selectPartWindow && selectPartWindow.isVisible() && selectPartWindow.hide();
+        favoritesWindow && favoritesWindow.isVisible() && favoritesWindow.hide();
         configWindow && configWindow.isVisible() && configWindow.hide();
       } else {
         mainWindow.showInactive();
@@ -560,6 +684,52 @@ function bindHistoryShortcut(shortcut = utils.config.get('historyShortcut'), isU
   }, isUpdate);
 }
 
+function bindForwardShortcut(shortcut = utils.config.get('forwardShortcut'), isUpdate) {
+  return registerGlobalShortcut(shortcut, '前进快捷键', () => {
+    mainWindow && mainWindow.webContents.send('navigate-forward');
+  }, isUpdate);
+}
+
+function bindBackShortcut(shortcut = utils.config.get('backShortcut'), isUpdate) {
+  return registerGlobalShortcut(shortcut, '后退快捷键', () => {
+    mainWindow && mainWindow.webContents.send('navigate-back');
+  }, isUpdate);
+}
+
+// B 站收藏页是 space.bilibili.com/{UID}/favlist，需要从登录态 Cookie 里
+// 取出当前用户 UID 才能拼出地址；未登录时给出提示而不是打开空白页。
+async function openFavoritesPage() {
+  try {
+    const cookies = await session.defaultSession.cookies.get({ name: 'DedeUserID' });
+    const uid = cookies && cookies.length ? cookies[0].value : null;
+    if( !uid ) {
+      utils.log('收藏页：未检测到登录态');
+      mainWindow && !mainWindow.isDestroyed() && dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        message: '尚未登录 B 站，请先登录后再使用「我的收藏页」快捷键。'
+      });
+      return;
+    }
+    const url = `https://space.bilibili.com/${uid}/favlist`;
+    utils.log(`收藏页：跳转到 ${url}`);
+    mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.send('open-favorites', url);
+  } catch(err) {
+    utils.error(`收藏页：读取登录状态失败\n${err}`);
+  }
+}
+
+function bindFavoriteShortcut(shortcut = utils.config.get('favoriteShortcut'), isUpdate) {
+  return registerGlobalShortcut(shortcut, '收藏页快捷键', () => {
+    openFavoritesPage();
+  }, isUpdate);
+}
+
+function bindReloadShortcut(shortcut = utils.config.get('reloadShortcut'), isUpdate) {
+  return registerGlobalShortcut(shortcut, '刷新页面快捷键', () => {
+    mainWindow && mainWindow.webContents.send('reload-page');
+  }, isUpdate);
+}
+
 function bindIncreasePlaybackRateShortcut(shortcut = utils.config.get('increasePlaybackRateShortcut'), isUpdate) {
   return registerGlobalShortcut(shortcut, '提高播放倍速快捷键', () => {
     mainWindow && mainWindow.webContents.send('change-playback-rate', 0.05);
@@ -570,6 +740,23 @@ function bindDecreasePlaybackRateShortcut(shortcut = utils.config.get('decreaseP
   return registerGlobalShortcut(shortcut, '降低播放倍速快捷键', () => {
     mainWindow && mainWindow.webContents.send('change-playback-rate', -0.05);
   }, isUpdate);
+}
+
+function bindZoomOutShortcut(shortcut = utils.config.get('zoomOutShortcut'), isUpdate) {
+  return registerGlobalShortcut(shortcut, '缩小页面快捷键', () => {
+    sendPageZoom(-1);
+  }, isUpdate);
+}
+
+function bindZoomInShortcut(shortcut = utils.config.get('zoomInShortcut'), isUpdate) {
+  return registerGlobalShortcut(shortcut, '放大页面快捷键', () => {
+    sendPageZoom(1);
+  }, isUpdate);
+}
+
+function sendPageZoom(direction) {
+  lastPageZoomShortcutAt = Date.now();
+  mainWindow && mainWindow.webContents.send('change-page-zoom', direction);
 }
 
 function updateGlobalShortcut(event, key, previous, next, bind) {
@@ -598,17 +785,41 @@ function initGlobalShortcut() {
   ipc.on('update-history-shortcut', (ev, previous, next) => {
     updateGlobalShortcut(ev, 'historyShortcut', previous, next, bindHistoryShortcut);
   });
+  ipc.on('update-forward-shortcut', (ev, previous, next) => {
+    updateGlobalShortcut(ev, 'forwardShortcut', previous, next, bindForwardShortcut);
+  });
+  ipc.on('update-back-shortcut', (ev, previous, next) => {
+    updateGlobalShortcut(ev, 'backShortcut', previous, next, bindBackShortcut);
+  });
+  ipc.on('update-favorite-shortcut', (ev, previous, next) => {
+    updateGlobalShortcut(ev, 'favoriteShortcut', previous, next, bindFavoriteShortcut);
+  });
+  ipc.on('update-reload-shortcut', (ev, previous, next) => {
+    updateGlobalShortcut(ev, 'reloadShortcut', previous, next, bindReloadShortcut);
+  });
   ipc.on('update-increase-playback-rate-shortcut', (ev, previous, next) => {
     updateGlobalShortcut(ev, 'increasePlaybackRateShortcut', previous, next, bindIncreasePlaybackRateShortcut);
   });
   ipc.on('update-decrease-playback-rate-shortcut', (ev, previous, next) => {
     updateGlobalShortcut(ev, 'decreasePlaybackRateShortcut', previous, next, bindDecreasePlaybackRateShortcut);
   });
+  ipc.on('update-zoom-out-shortcut', (ev, previous, next) => {
+    updateGlobalShortcut(ev, 'zoomOutShortcut', previous, next, bindZoomOutShortcut);
+  });
+  ipc.on('update-zoom-in-shortcut', (ev, previous, next) => {
+    updateGlobalShortcut(ev, 'zoomInShortcut', previous, next, bindZoomInShortcut);
+  });
   bindHideShortcut();
   bindPlayPauseShortcut();
   bindWebFullscreenShortcut();
   bindFocusWindowShortcut();
   bindHistoryShortcut();
+  bindForwardShortcut();
+  bindBackShortcut();
+  bindFavoriteShortcut();
+  bindReloadShortcut();
   bindIncreasePlaybackRateShortcut();
   bindDecreasePlaybackRateShortcut();
+  bindZoomOutShortcut();
+  bindZoomInShortcut();
 }

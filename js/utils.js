@@ -14,9 +14,17 @@ const configDefaults = {
     webFullscreenShortcut: 'Alt + D',
     focusWindowShortcut: 'Alt + S',
     historyShortcut: 'Alt + A',
+    forwardShortcut: 'Alt + Right',
+    backShortcut: 'Alt + Left',
+    favoriteShortcut: 'Alt + C',
+    reloadShortcut: 'Alt + R',
     increasePlaybackRateShortcut: 'Alt+Up',
     decreasePlaybackRateShortcut: 'Alt+Down',
-    proxy: ''
+    zoomOutShortcut: 'Alt+Shift+-',
+    // “+” 在标准键盘上是 Shift+=；用完整 Accelerator 保证各平台可识别。
+    zoomInShortcut: 'Alt+Shift+=',
+    proxy: '',
+    favorites: []
 };
 
 let configStore = null;
@@ -109,6 +117,24 @@ function getVid(url) {
     return m ? m[1] : null;
 }
 
+// 收藏去重用的规范化地址：忽略末尾斜杠、hash 和常见的追踪参数，
+// 但保留路径大小写（B 站 BV 号大小写敏感）。
+function normalizeFavoriteUrl(url) {
+    if( typeof url !== 'string' || !url.trim() ) {
+        return '';
+    }
+    try {
+        const parsed = new URL(url);
+        const params = new URLSearchParams(parsed.search);
+        ['vd_source', 'spm_id_from', 'share_source'].forEach((key) => params.delete(key));
+        const search = params.toString();
+        const path = parsed.pathname.replace(/\/+$/, '');
+        return `${parsed.protocol.toLowerCase()}//${parsed.host.toLowerCase()}${path}${search ? '?' + search : ''}`;
+    } catch(err) {
+        return url.split('#')[0].replace(/\/+$/, '');
+    }
+}
+
 function getFirstJsonFromString(text) {
     const len = text.length;
     for( let i = 0; i < len; i++ ) {
@@ -175,6 +201,7 @@ module.exports = {
     ajax,
     getVid,
     getVidWithP,
+    normalizeFavoriteUrl,
     getFirstJsonFromString,
     log(message, data, override) {
         log.write({

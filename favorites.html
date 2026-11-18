@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="cn">
+<head>
+	<meta charset="UTF-8">
+	<title>Bilibili v.mini - 链接收藏</title>
+	<link rel="stylesheet" href="css/child-window.css">
+</head>
+<body>
+	<div id="wrapper">
+		<div id="config-dragzone">链接收藏<span id="close" @click="closeWindow">x</span></div>
+		<div class="list favorites-list">
+			<p class="list-title">已收藏链接（{{ favorites.length }}）</p>
+			<div v-if="!favorites.length" class="fav-empty">
+				还没有收藏的链接。<br>点击主窗口的星形按钮即可收藏当前页面。
+			</div>
+			<div class="item fav-item" v-for="(item, index) in favorites" :key="item.url + '_' + index" :title="item.url" @click="openUrl(item)">
+				<div class="fav-title">{{ item.title || item.url }}</div>
+				<div class="fav-url">{{ item.url }}</div>
+				<span class="fav-delete" title="删除这条收藏" @click.stop="removeFavorite(index)">删除</span>
+			</div>
+		</div>
+	</div>
+
+	<script src="js/vue.min.js"></script>
+	<script>
+		const ipc = require('electron').ipcRenderer;
+		// utils.js 末尾是 module.exports，只能通过 require 加载；
+		// 用 <script src> 会因 module 未定义而整体加载失败。
+		const utils = require('./js/utils.js');
+
+		window.onerror = function(err, f, line) {
+			const id = String(f).split('/');
+			utils.error(`收藏窗口脚本错误 ${id[id.length-1]} : Line ${line}\n> ${err}`);
+		};
+
+		const v = new Vue({
+			el: '#wrapper',
+			data: {
+				favorites: []
+			},
+			methods: {
+				// 与设置窗口保持完全一致的关闭方式。
+				closeWindow() {
+					utils.log('收藏窗口：点击关闭');
+					ipc.send('hide-current-window');
+				},
+				loadFavorites: function() {
+					const stored = utils.config.get('favorites');
+					this.favorites = Array.isArray(stored) ? stored.filter(function(item) {
+						return item && typeof item.url === 'string' && /^https?:\/\//i.test(item.url);
+					}) : [];
+				},
+				openUrl: function(item) {
+					utils.log(`收藏：点击链接 ${item.url}`);
+					ipc.send('open-favorite-url', item.url);
+				},
+				removeFavorite: function(index) {
+					const removed = this.favorites[index];
+					if( !removed ) {
+						return;
+					}
+					this.favorites.splice(index, 1);
+					utils.config.set('favorites', this.favorites);
+					utils.log(`收藏：删除链接 ${removed.url}`);
+				}
+			}
+		});
+
+		// 主窗口新增收藏后通过主进程转发此事件，保持列表实时更新。
+		ipc.on('reload-favorites', function() {
+			v.loadFavorites();
+		});
+
+		window.addEventListener('keydown', function(e) {
+			if( e.key === 'Escape' ) {
+				v.closeWindow();
+			}
+		});
+
+		v.loadFavorites();
+		utils.log('收藏窗口：脚本初始化完成');
+	</script>
+</body>
+</html>

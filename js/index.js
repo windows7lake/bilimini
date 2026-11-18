@@ -16,6 +16,7 @@ const liveUrlPrefix  = 'https://live.bilibili.com/blanc/';
 const historyUrl = 'https://www.bilibili.com/account/history';
 let wv, wrapper;
 let isProgrammaticNavigation = false;
+let pageZoomFactor = 1;
 
 function loadWebview(url, options) {
   // Electron 44 同样会为 loadURL 触发 will-navigate。标记这段期间的
@@ -54,7 +55,7 @@ var _history = {
     // 如果两次转跳的时间间隔小于3s，就认为是B站发起的redirect
     // 这时为保证后退时不会陷入循环，手动删除一条历史
     const now = new Date();
-    if( now - _lastNavigation < 3000 ) {
+    if( !noNewHistory && _history.pos > 0 && now - _lastNavigation < 3000 ) {
       utils.log('两次转跳间隔小于3s，疑似redirect');
       _history.pop();
     }
@@ -65,7 +66,6 @@ var _history = {
         userAgent: userAgent.desktop
       });
       !noNewHistory && _history.add(videoUrlPrefix + vid);
-      v.disableDanmakuButton = false;
       utils.log(`路由：类型① 视频详情页\n原地址：${target}\n转跳地址：${videoUrlPrefix+vid}`);
     } else if( target.indexOf('bangumi/play/') > -1 ) {
       // case 2 番剧播放页
@@ -73,14 +73,12 @@ var _history = {
         userAgent: userAgent.desktop
       });
       !noNewHistory && _history.add(target);
-      v.disableDanmakuButton = false;
       utils.log(`路由：类型② 番剧播放页\n地址：${target}`);
     } else if ( live = /live\.bilibili\.com\/(h5\/||blanc\/)?(\d+).*/.exec(target) ) {
       loadWebview(liveUrlPrefix + live[2], {
         userAgent: userAgent.desktop
       });
       !noNewHistory && _history.add(liveUrlPrefix + live[2]);
-      v.disableDanmakuButton = false;
       utils.log(`路由：类型③ 直播页面\n原地址：${target}\n转跳地址：${liveUrlPrefix+live[2]}`);
     } else {
       // 其他链接不做操作直接打开
@@ -90,7 +88,6 @@ var _history = {
       !noNewHistory && _history.add(target);
       // 清除分p
       ipc.send('update-part', null);
-      v.disableDanmakuButton = true;
       utils.log(`路由：类型④ 未归类\n原地址：${target}\n转跳地址：${target}`);
     }
   },
@@ -116,6 +113,7 @@ var _history = {
     _history.stack.length = _history.pos + 1;
     _history.stack.push(url);
     _history.pos++;
+    syncNavigationControls();
   },
   recordNavigation: function(url) {
     // 用户在 webview 内点击链接时，不再取消原始导航再 loadURL 一次。
@@ -133,41 +131,85 @@ var _history = {
   pop: function() {
     _history.stack.pop();
     _history.pos--;
+    syncNavigationControls();
   },
   goBack: function() {
-    if(!_history.canGoBack()) {
-      return false;
-    }
-    utils.log('路由：后退');
-    _history.go(_history.stack[--_history.pos], true);
+    return navigateWebviewHistory('back');
   },
   goForward: function() {
-    if(!_history.canGoForward()) {
-      return false;
-    }
-    utils.log('路由：前进');
-    _history.go(_history.stack[++_history.pos], true);
+    return navigateWebviewHistory('forward');
   },
   canGoBack: function() {
-    return _history.pos > 0;
+    return canNavigateWebviewHistory('back');
   },
   canGoForward: function() {
-    return _history.pos + 1 < _history.stack.length;
+    return canNavigateWebviewHistory('forward');
   }
 };
+
+function canNavigateWebviewHistory(direction) {
+  if( !wv ) {
+    return false;
+  }
+  try {
+    return direction === 'back' ? wv.canGoBack() : wv.canGoForward();
+  } catch(err) {
+    return false;
+  }
+}
+
+function navigateWebviewHistory(direction) {
+  if( !canNavigateWebviewHistory(direction) ) {
+    return false;
+  }
+  utils.log(`路由：${direction === 'back' ? '后退' : '前进'}`);
+  wrapper.classList.add('loading');
+  if( direction === 'back' ) {
+    wv.goBack();
+  } else {
+    wv.goForward();
+  }
+  // goBack/goForward 是异步导航；加载完成事件会再同步一次最终状态。
+  requestAnimationFrame(syncNavigationControls);
+  return true;
+}
+
+function syncNavigationControls() {
+  v.naviCanGoBack = canNavigateWebviewHistory('back');
+  v.naviCanGoForward = canNavigateWebviewHistory('forward');
+}
+
+// 刷新当前 webview 页面；按钮与快捷键共用，did-finish-load 会移除 loading 遮罩。
+// 收藏按钮的临时反馈，避免用户点击后看不到任何变化。
+let favoriteToastTimer = null;
+function showFavoriteToast(message, isDup) {
+  v.favoriteToast = message;
+  v.favoriteToastDup = !!isDup;
+  clearTimeout(favoriteToastTimer);
+  favoriteToastTimer = setTimeout(function() {
+    v.favoriteToast = '';
+  }, 1800);
+}
+
+function reloadWebview() {
+  if( !wv ) {
+    return;
+  }
+  wrapper.classList.add('loading');
+  wv.reload();
+  utils.log('主窗口：刷新当前页面');
+}
 
 function updateVideoParts(vid, parts) {
   if( !Array.isArray(parts) || !parts.length ) {
     ipc.send('update-part', null);
-    v.disablePartButton = true;
     return;
   }
 
   ipc.send('update-part', parts.map((part, index) => part.part || part.title || `P${index + 1}`));
-  v.disablePartButton = parts.length <= 1;
   utils.log(`获取视频 ${vid} 的分P数据成功，共 ${parts.length} P`);
 
-  // 多 P 视频加载完成后沿用原有行为，直接展示列表；之后可由 P 按钮开关它。
+  // 多 P 视频加载完成后沿用原有行为，直接展示列表。
   if( parts.length > 1 ) {
     ipc.send('show-select-part-window');
   }
@@ -228,11 +270,9 @@ function getPartOfBangumi(url) {
       });
       if( parts.length > 1 ) {
         ipc.send('show-select-part-window');
-        v.disablePartButton = false;
       }
     } else {
       ipc.send('update-part', null);
-      v.disablePartButton = true;
     }
   });
 }
@@ -248,8 +288,8 @@ const v = new Vue({
     naviCanGoForward: false,
     showNaviGotoOverlay: false,
     showAboutOverlay: false,
-    disableDanmakuButton: true,
-    disablePartButton: true
+    favoriteToast: '',
+    favoriteToastDup: false
   },
   methods: {
     // 后退
@@ -300,6 +340,59 @@ const v = new Vue({
         alert('你确定输入的是b站链接或者av号吗？');
       }
     },
+    // 刷新当前页面
+    reloadPage: function() {
+      reloadWebview();
+    },
+    // 复制当前链接
+    copyCurrentLink: function() {
+      const url = wv && wv.getURL();
+      if( !url || url === 'about:blank' ) {
+        utils.log('主窗口：当前无可复制的链接');
+        return;
+      }
+      const ok = ipc.sendSync('copy-text', url);
+      if( ok ) {
+        utils.log(`主窗口：已复制当前链接 ${url}`);
+      } else {
+        utils.error('主窗口：复制当前链接失败（剪贴板写入未成功）');
+      }
+    },
+    // 收藏当前页面链接
+    favoriteCurrentPage: function() {
+      const url = wv && wv.getURL();
+      if( !url || url === 'about:blank' ) {
+        utils.log('主窗口：当前无可收藏的链接');
+        return;
+      }
+      const stored = utils.config.get('favorites');
+      const favorites = Array.isArray(stored) ? stored.slice() : [];
+      const targetKey = utils.normalizeFavoriteUrl(url);
+      const duplicated = favorites.some(function(item) {
+        return utils.normalizeFavoriteUrl(item && item.url) === targetKey;
+      });
+      if( duplicated ) {
+        utils.log(`主窗口：链接已在收藏列表中 ${url}`);
+        showFavoriteToast('已收藏', true);
+        return;
+      }
+      let title = '';
+      try {
+        title = wv.getTitle() || '';
+      } catch(err) {
+        title = '';
+      }
+      favorites.unshift({ url: url, title: title, createdAt: Date.now() });
+      utils.config.set('favorites', favorites);
+      ipc.send('favorites-changed');
+      showFavoriteToast('已收藏', false);
+      utils.log(`主窗口：已收藏链接 ${url}`);
+    },
+    // 打开/收起收藏列表窗口
+    toggleFavoritesWindow: function() {
+      utils.log('主窗口：切换收藏列表窗口');
+      ipc.send('toggle-favorites-window');
+    },
     // 关于
     showAbout: function() {
       utils.log('主窗口：点击关于');
@@ -309,19 +402,6 @@ const v = new Vue({
     hideAbout: function() {
       this.showAboutOverlay = false;
       wrapper.classList.remove('showAbout');
-    },
-    // 召唤选p窗口
-    toggleSelectPartWindow: function() {
-      if(this.disablePartButton) {
-        return false;
-      }
-      utils.log('主窗口：点击P');
-      ipc.send('toggle-select-part-window');
-    },
-    // 进入订阅
-    showFeed() {
-      utils.log('主窗口：点击订阅');
-      _history.go('https://t.bilibili.com/?tab=8');
     },
     // 设置窗口
     toggleConfig: function() {
@@ -333,44 +413,11 @@ const v = new Vue({
       utils.log('主窗口：点击退出');
       ipc.send('close-main-window');
     },
-    // 显示、隐藏弹幕快捷键
-    // pull request #1. Thanks to bumaociyuan
-    toggleDanmaku: function() {
-      if(this.disableDanmakuButton) {
-        return false;
-      }
-      utils.log('主窗口：点击弹幕开关');
-      // B 站播放器的 class 名经历过多次调整；播放器通常比 did-finish-load
-      // 更晚挂载，短暂重试避免首次打开视频时按钮看起来没有反应。
-      wv.executeJavaScript(`(() => {
-        const selectors = [
-          '.bilibili-player-video-danmaku-switch .bui-switch-input',
-          '.bpx-player-ctrl-dm input',
-          '.bpx-player-dm-switch input',
-          '[class*="danmaku"] input[type="checkbox"]',
-          '[class*="danmaku"] button'
-        ];
-        const toggle = () => {
-          const control = selectors.map((selector) => document.querySelector(selector)).find(Boolean);
-          if (!control) return false;
-          control.click();
-          return true;
-        };
-        if (toggle()) return Promise.resolve(true);
-        return new Promise((resolve) => {
-          let attempts = 0;
-          const timer = setInterval(() => {
-            attempts += 1;
-            const changed = toggle();
-            if (changed || attempts >= 12) {
-              clearInterval(timer);
-              resolve(changed);
-            }
-          }, 250);
-        });
-      })()`).then((changed) => {
-        if( !changed ) utils.log('弹幕开关：未找到播放器控件');
-      }).catch((err) => utils.error('弹幕开关失败：\n' + err));
+    zoomOut: function() {
+      changePageZoom(-1);
+    },
+    zoomIn: function() {
+      changePageZoom(1);
     }
   }
 });
@@ -451,11 +498,28 @@ function fitWebviewToWindow() {
   }
   // 应用统一加载 B 站桌面站点；其页面以约 1280px 布局宽度设计。缩放
   // webview 而非注入强制 CSS，可同时适配首页、视频、历史和控制栏。
+  applyPageZoom();
+}
+
+function applyPageZoom() {
+  if( !wv ) {
+    return;
+  }
   const url = wv.getURL();
-  const zoom = /^https:\/\/(?:www|t|live)\.bilibili\.com\//.test(url)
+  const automaticZoom = /^https:\/\/(?:www|t|live)\.bilibili\.com\//.test(url)
     ? Math.max(0.25, Math.min(1, window.innerWidth / 1280))
     : 1;
-  wv.setZoomFactor(zoom);
+  wv.setZoomFactor(Math.max(0.25, Math.min(3, automaticZoom * pageZoomFactor)));
+}
+
+function changePageZoom(direction) {
+  const step = Number(direction);
+  if( !Number.isFinite(step) || step === 0 ) {
+    return;
+  }
+  pageZoomFactor = Math.max(0.5, Math.min(2, Math.round((pageZoomFactor + step * 0.1) * 100) / 100));
+  applyPageZoom();
+  utils.log(`页面缩放：${Math.round(pageZoomFactor * 100)}%`);
 }
 
 // 根据用户访问的url决定app窗口尺寸
@@ -508,8 +572,7 @@ function initActionOnWebviewNavigate() {
   wv.addEventListener('did-finish-load', function() {
     let url = wv.getURL();
     utils.log(`触发 did-finish-load 事件，当前url是: ${url}`);
-    v.naviCanGoBack = _history.canGoBack();
-    v.naviCanGoForward = _history.canGoForward();
+    syncNavigationControls();
     // 把当前webview的实际url记录下来
     _history.lastLoadedUrl = url;
     // 改变窗口尺寸
@@ -548,6 +611,9 @@ function initActionOnWebviewNavigate() {
       _history.recordNavigation(e.url);
     }
   });
+  // 目前 B 站大量使用 History API 做站内跳转；它不会触发 will-navigate，
+  // 但会改变 webview 原生的前进/后退状态。
+  wv.addEventListener('did-navigate-in-page', syncNavigationControls);
   // b站mobile版看起来是改用pushstate做单页应用了，没法从webview上监听到will-navigate事件了
   // 只能祭出古老的dirty check了
   setInterval(function() {
@@ -638,6 +704,28 @@ function initActionOnHistoryShortcut() {
   });
 }
 
+// 前进/后退/收藏页快捷键（主进程转发过来的消息）
+function initActionOnNavigationShortcuts() {
+  ipc.on('navigate-forward', () => {
+    _history.goForward();
+  });
+  ipc.on('navigate-back', () => {
+    _history.goBack();
+  });
+  ipc.on('open-favorites', (ev, url) => {
+    _history.go(url);
+  });
+  ipc.on('reload-page', () => {
+    reloadWebview();
+  });
+}
+
+function initActionOnPageZoomShortcut() {
+  ipc.on('change-page-zoom', (ev, direction) => {
+    changePageZoom(direction);
+  });
+}
+
 // windows下frameless window没法正确检测到mouseout事件，只能根据光标位置做个dirtyCheck了
 function initMouseStateDirtyCheck() {
   // 统一改为由js判断，一旦鼠标进入主窗口的上较近才显示topbar
@@ -699,6 +787,8 @@ window.addEventListener('DOMContentLoaded', function() {
   initActionOnWebFullscreenShortcut();
   initActionOnPlaybackRateShortcut();
   initActionOnHistoryShortcut();
+  initActionOnNavigationShortcuts();
+  initActionOnPageZoomShortcut();
   initWebviewVolumeContrlShortcuts();
   saveWindowSizeOnResize();
   initMouseStateDirtyCheck();

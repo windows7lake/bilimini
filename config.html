@@ -7,7 +7,7 @@
 </head>
 <body>
   <div id="wrapper">
-    <span id="close" @click="closeWindow">x</span>
+    <div id="config-dragzone">设置<span id="close" @click="closeWindow">x</span></div>
     <div id="config-list" class="list">
       <!-- 不透明度 -->
       <p class="list-title">窗口不透明度</p>
@@ -17,47 +17,59 @@
       <label class="item" :class="{active: autoPause}">
           <input type="checkbox" class="checkbox" v-model="autoPause" /> <span style="vertical-align: middle;">隐藏时暂停，显示时播放</span>
       </label>
-      <!-- 老板键 -->
-      <p class="list-title">老板键</p>
-      <div class="item">
-        <input type="text" class="input" v-model="hideShortcut">
-        <span class="btn btn-submit" @click="saveHideShortcut">确定</span>
-      </div>
-      <!-- 播放/暂停快捷键 -->
-      <p class="list-title">播放/暂停快捷键</p>
-      <div class="item">
-        <input type="text" class="input" v-model="playPauseShortcut">
-        <span class="btn btn-submit" @click="savePlayPauseShortcut">确定</span>
-      </div>
-      <!-- 网页全屏快捷键 -->
-      <p class="list-title">网页全屏快捷键</p>
-      <div class="item">
-        <input type="text" class="input" v-model="webFullscreenShortcut">
-        <span class="btn btn-submit" @click="saveWebFullscreenShortcut">确定</span>
-      </div>
-      <!-- 窗口聚焦快捷键 -->
-      <p class="list-title">窗口聚焦快捷键</p>
-      <div class="item">
-        <input type="text" class="input" v-model="focusWindowShortcut">
-        <span class="btn btn-submit" @click="saveFocusWindowShortcut">确定</span>
-      </div>
-      <!-- 播放历史快捷键 -->
-      <p class="list-title">播放历史快捷键</p>
-      <div class="item">
-        <input type="text" class="input" v-model="historyShortcut">
-        <span class="btn btn-submit" @click="saveHistoryShortcut">确定</span>
-      </div>
-      <!-- 提高播放倍速快捷键 -->
-      <p class="list-title">提高播放倍速快捷键</p>
-      <div class="item">
-        <input type="text" class="input" v-model="increasePlaybackRateShortcut">
-        <span class="btn btn-submit" @click="saveIncreasePlaybackRateShortcut">确定</span>
-      </div>
-      <!-- 降低播放倍速快捷键 -->
-      <p class="list-title">降低播放倍速快捷键</p>
-      <div class="item">
-        <input type="text" class="input" v-model="decreasePlaybackRateShortcut">
-        <span class="btn btn-submit" @click="saveDecreasePlaybackRateShortcut">确定</span>
+      <div class="shortcut-grid">
+        <div class="shortcut-setting">
+          <p class="list-title">老板键</p>
+          <div class="item"><input type="text" class="input" v-model="hideShortcut"><span class="btn btn-submit" @click="saveHideShortcut">确定</span></div>
+        </div>
+        <div class="shortcut-setting">
+          <p class="list-title">播放/暂停快捷键</p>
+          <div class="item"><input type="text" class="input" v-model="playPauseShortcut"><span class="btn btn-submit" @click="savePlayPauseShortcut">确定</span></div>
+        </div>
+        <div class="shortcut-setting">
+          <p class="list-title">网页全屏快捷键</p>
+          <div class="item"><input type="text" class="input" v-model="webFullscreenShortcut"><span class="btn btn-submit" @click="saveWebFullscreenShortcut">确定</span></div>
+        </div>
+        <div class="shortcut-setting">
+          <p class="list-title">窗口聚焦快捷键</p>
+          <div class="item"><input type="text" class="input" v-model="focusWindowShortcut"><span class="btn btn-submit" @click="saveFocusWindowShortcut">确定</span></div>
+        </div>
+        <div class="shortcut-setting">
+          <p class="list-title">播放历史快捷键</p>
+          <div class="item"><input type="text" class="input" v-model="historyShortcut"><span class="btn btn-submit" @click="saveHistoryShortcut">确定</span></div>
+        </div>
+        <div class="shortcut-setting">
+          <p class="list-title">前进快捷键</p>
+          <div class="item"><input type="text" class="input" v-model="forwardShortcut"><span class="btn btn-submit" @click="saveForwardShortcut">确定</span></div>
+        </div>
+        <div class="shortcut-setting">
+          <p class="list-title">后退快捷键</p>
+          <div class="item"><input type="text" class="input" v-model="backShortcut"><span class="btn btn-submit" @click="saveBackShortcut">确定</span></div>
+        </div>
+        <div class="shortcut-setting">
+          <p class="list-title">我的收藏页快捷键</p>
+          <div class="item"><input type="text" class="input" v-model="favoriteShortcut"><span class="btn btn-submit" @click="saveFavoriteShortcut">确定</span></div>
+        </div>
+        <div class="shortcut-setting">
+          <p class="list-title">刷新页面快捷键</p>
+          <div class="item"><input type="text" class="input" v-model="reloadShortcut"><span class="btn btn-submit" @click="saveReloadShortcut">确定</span></div>
+        </div>
+        <div class="shortcut-setting">
+          <p class="list-title">提高播放倍速快捷键</p>
+          <div class="item"><input type="text" class="input" v-model="increasePlaybackRateShortcut"><span class="btn btn-submit" @click="saveIncreasePlaybackRateShortcut">确定</span></div>
+        </div>
+        <div class="shortcut-setting">
+          <p class="list-title">降低播放倍速快捷键</p>
+          <div class="item"><input type="text" class="input" v-model="decreasePlaybackRateShortcut"><span class="btn btn-submit" @click="saveDecreasePlaybackRateShortcut">确定</span></div>
+        </div>
+        <div class="shortcut-setting">
+          <p class="list-title">缩小页面快捷键</p>
+          <div class="item"><input type="text" class="input" v-model="zoomOutShortcut"><span class="btn btn-submit" @click="saveZoomOutShortcut">确定</span></div>
+        </div>
+        <div class="shortcut-setting">
+          <p class="list-title">放大页面快捷键</p>
+          <div class="item"><input type="text" class="input" v-model="zoomInShortcut"><span class="btn btn-submit" @click="saveZoomInShortcut">确定</span></div>
+        </div>
       </div>
       <!-- 代理 -->
       <p class="list-title">代理设置</p>
@@ -85,8 +97,14 @@
         webFullscreenShortcut: '',
         focusWindowShortcut: '',
         historyShortcut: '',
+        forwardShortcut: '',
+        backShortcut: '',
+        favoriteShortcut: '',
+        reloadShortcut: '',
         increasePlaybackRateShortcut: '',
         decreasePlaybackRateShortcut: '',
+        zoomOutShortcut: '',
+        zoomInShortcut: '',
         proxy: '',
         autoPause: false,
       },
@@ -111,8 +129,15 @@
           ipc.send('hide-current-window');
         },
         saveShortcut(key, property, eventName) {
+          const rawShortcut = this[property].replace(/\s+/g, '');
+          // “+” 位于 Shift+=；接受用户输入的 Alt++ / Alt + +。
+          const normalizedShortcut = rawShortcut.endsWith('++')
+            ? `${rawShortcut.slice(0, -1)}Shift+=`
+            : rawShortcut.toLowerCase() === 'alt+plus'
+              ? 'Alt+Shift+='
+              : this[property];
           var lastShortcut = config.get(key),
-              curShortcut = this[property].split('+').map((c) => {
+              curShortcut = normalizedShortcut.split('+').map((c) => {
                 let _c = c.trim().toLowerCase().split('');
                 _c[0] = _c[0].toUpperCase();
                 return _c.join('');
@@ -137,11 +162,29 @@
         saveHistoryShortcut() {
           this.saveShortcut('historyShortcut', 'historyShortcut', 'update-history-shortcut');
         },
+        saveForwardShortcut() {
+          this.saveShortcut('forwardShortcut', 'forwardShortcut', 'update-forward-shortcut');
+        },
+        saveBackShortcut() {
+          this.saveShortcut('backShortcut', 'backShortcut', 'update-back-shortcut');
+        },
+        saveFavoriteShortcut() {
+          this.saveShortcut('favoriteShortcut', 'favoriteShortcut', 'update-favorite-shortcut');
+        },
+        saveReloadShortcut() {
+          this.saveShortcut('reloadShortcut', 'reloadShortcut', 'update-reload-shortcut');
+        },
         saveIncreasePlaybackRateShortcut() {
           this.saveShortcut('increasePlaybackRateShortcut', 'increasePlaybackRateShortcut', 'update-increase-playback-rate-shortcut');
         },
         saveDecreasePlaybackRateShortcut() {
           this.saveShortcut('decreasePlaybackRateShortcut', 'decreasePlaybackRateShortcut', 'update-decrease-playback-rate-shortcut');
+        },
+        saveZoomOutShortcut() {
+          this.saveShortcut('zoomOutShortcut', 'zoomOutShortcut', 'update-zoom-out-shortcut');
+        },
+        saveZoomInShortcut() {
+          this.saveShortcut('zoomInShortcut', 'zoomInShortcut', 'update-zoom-in-shortcut');
         },
         saveProxy() {
           config.set('proxy', this.proxy);
@@ -161,8 +204,14 @@
         this.webFullscreenShortcut = config.get('webFullscreenShortcut');
         this.focusWindowShortcut = config.get('focusWindowShortcut');
         this.historyShortcut = config.get('historyShortcut');
+        this.forwardShortcut = config.get('forwardShortcut');
+        this.backShortcut = config.get('backShortcut');
+        this.favoriteShortcut = config.get('favoriteShortcut');
+        this.reloadShortcut = config.get('reloadShortcut');
         this.increasePlaybackRateShortcut = config.get('increasePlaybackRateShortcut');
         this.decreasePlaybackRateShortcut = config.get('decreasePlaybackRateShortcut');
+        this.zoomOutShortcut = config.get('zoomOutShortcut');
+        this.zoomInShortcut = config.get('zoomInShortcut');
         this.proxy = config.get('proxy');
         this.autoPause = config.get('autoPause');
       }
@@ -175,8 +224,14 @@
         webFullscreenShortcut: 'webFullscreenShortcut',
         focusWindowShortcut: 'focusWindowShortcut',
         historyShortcut: 'historyShortcut',
+        forwardShortcut: 'forwardShortcut',
+        backShortcut: 'backShortcut',
+        favoriteShortcut: 'favoriteShortcut',
+        reloadShortcut: 'reloadShortcut',
         increasePlaybackRateShortcut: 'increasePlaybackRateShortcut',
-        decreasePlaybackRateShortcut: 'decreasePlaybackRateShortcut'
+        decreasePlaybackRateShortcut: 'decreasePlaybackRateShortcut',
+        zoomOutShortcut: 'zoomOutShortcut',
+        zoomInShortcut: 'zoomInShortcut'
       };
       const property = properties[key];
       v[property] = shortcut.replace(/\+/g, ' + ');

@@ -107,6 +107,22 @@ body.win .showAbout #topbar {
   top: -1px;
   right: 10px;
 }
+#favorite-toast {
+  background: #f25d8e;
+  border-radius: 3px;
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  margin: 0 2px;
+  padding: 0 6px;
+  position: relative;
+  white-space: nowrap;
+  z-index: 2;
+}
+#favorite-toast.dup {
+  background: #fb93ab;
+  color: #f25d8e;
+}
 .top-btn {
   background: #fb93ab;
   color: #f25d8e;
@@ -153,20 +169,38 @@ body.win .showAbout #topbar {
   line-height: 15px;
   padding: 0 5px;
 }
-#app-danmaku,
-#app-part{
-  font-size: 10px;
-  line-height: 14px;
+#navi-reload {
+  background-image: url('../images/reload.png');
+  background-position: 1px 1px;
+  background-repeat: no-repeat;
+  background-size: 13px;
+}
+#navi-copy {
+  background-image: url('../images/link.png');
+  background-position: 1px 1px;
+  background-repeat: no-repeat;
+  background-size: 13px;
+}
+#navi-favorite {
+  background-image: url('../images/favorite.png');
+  background-position: 1px 1px;
+  background-repeat: no-repeat;
+  background-size: 13px;
+}
+#navi-favorites {
+  background-image: url('../images/favorite-list.png');
+  background-position: 1px 1px;
+  background-repeat: no-repeat;
+  background-size: 13px;
 }
 #app-about{
   font-size: 12px;
   line-height: 14px;
 }
-#app-feed {
-  background-image: url('../images/feed.png');
-  background-position: 2px 2px;
-  background-repeat: no-repeat;
-  background-size: 11px;
+#app-zoom-out,
+#app-zoom-in {
+  font-size: 14px;
+  line-height: 13px;
 }
 #app-config {
   background-image: url('../images/config.png');
