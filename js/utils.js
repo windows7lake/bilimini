@@ -24,7 +24,11 @@ const configDefaults = {
     // “+” 在标准键盘上是 Shift+=；用完整 Accelerator 保证各平台可识别。
     zoomInShortcut: 'Alt+Shift+=',
     proxy: '',
-    favorites: []
+    favorites: [],
+    // 用户最近一次设定的播放倍速；新视频加载后会自动恢复。null 表示未设置过。
+    savedPlaybackRate: null,
+    // 页面整体饱和度：1 为原色，0 为灰度，2 为双倍饱和。
+    saturation: 1
 };
 
 let configStore = null;

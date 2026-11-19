@@ -329,6 +329,17 @@ function initExchangeMessageForRenderers() {
       mainWindow && mainWindow.setOpacity(value);
     }
   });
+  // 设置页面饱和度：保存配置并转发给主窗口注入到 webview。
+  ipc.on('set-saturation', (ev, saturation) => {
+    const value = Number(saturation);
+    if( Number.isFinite(value) ) {
+      const clamped = Math.max(0, Math.min(2, value));
+      utils.config.set('saturation', clamped);
+      mainWindow && !mainWindow.isDestroyed() &&
+        mainWindow.webContents.send('apply-saturation', clamped);
+      utils.log(`饱和度：设置为 ${clamped}`);
+    }
+  });
 }
 
 // 当主窗口收到各种消息时的反应

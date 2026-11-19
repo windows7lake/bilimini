@@ -12,6 +12,9 @@
       <!-- 不透明度 -->
       <p class="list-title">窗口不透明度</p>
       <div class="item item-range"><input type="range" class="range" v-model="opacity" min="0.1" max="0.9999" step="0.01"></div>
+      <!-- 页面饱和度 -->
+      <p class="list-title">页面饱和度 <span class="range-value">{{ Math.round(saturation * 100) }}%</span></p>
+      <div class="item item-range"><input type="range" class="range" v-model.number="saturation" min="0" max="2" step="0.05"></div>
       <!-- 隐藏窗口时是否暂停 -->
       <p class="list-title">隐藏窗口时自动暂停</p>
       <label class="item" :class="{active: autoPause}">
@@ -92,6 +95,7 @@
       el: '#wrapper',
       data: {
         opacity: 1,
+        saturation: 1,
         hideShortcut: '',
         playPauseShortcut: '',
         webFullscreenShortcut: '',
@@ -118,6 +122,10 @@
           }
           lastOpacity = val;
           config.set('opacity', val);
+        },
+        saturation(val) {
+          config.set('saturation', val);
+          ipc.send('set-saturation', val);
         },
         autoPause(val) {
           config.set('autoPause', val);
@@ -199,6 +207,8 @@
         if( storedOpacity !== opacity ) {
           config.set('opacity', opacity);
         }
+        const storedSaturation = Number(config.get('saturation'));
+        this.saturation = Number.isFinite(storedSaturation) ? Math.max(0, Math.min(2, storedSaturation)) : 1;
         this.hideShortcut = config.get('hideShortcut');
         this.playPauseShortcut = config.get('playPauseShortcut');
         this.webFullscreenShortcut = config.get('webFullscreenShortcut');

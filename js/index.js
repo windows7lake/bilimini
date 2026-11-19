@@ -17,6 +17,9 @@ const historyUrl = 'https://www.bilibili.com/account/history';
 let wv, wrapper;
 let isProgrammaticNavigation = false;
 let pageZoomFactor = 1;
+// 页面饱和度：保存当前值以便新页面加载后重新注入；insertCSS key 用于先移除旧样式。
+let currentSaturation = 1;
+let saturationCssKey = null;
 
 function loadWebview(url, options) {
   // Electron 44 同样会为 loadURL 触发 will-navigate。标记这段期间的
@@ -179,7 +182,6 @@ function syncNavigationControls() {
   v.naviCanGoForward = canNavigateWebviewHistory('forward');
 }
 
-// 刷新当前 webview 页面；按钮与快捷键共用，did-finish-load 会移除 loading 遮罩。
 // 收藏按钮的临时反馈，避免用户点击后看不到任何变化。
 let favoriteToastTimer = null;
 function showFavoriteToast(message, isDup) {
@@ -191,6 +193,46 @@ function showFavoriteToast(message, isDup) {
   }, 1800);
 }
 
+// 把饱和度作为 CSS filter 注入到 webview 内部页面。
+// 注入到 html 元素而非宿主 <webview>，这样能与 loading 时的 blur 叠加而互不影响；
+// 页面导航后注入的 CSS 会丢失，由 did-finish-load 重新注入（见 initActionOnWebviewNavigate）。
+function applySaturation(value, shouldPersist) {
+  const number = Number(value);
+  if( !Number.isFinite(number) ) {
+    return;
+  }
+  currentSaturation = Math.max(0, Math.min(2, number));
+  if( shouldPersist ) {
+    utils.config.set('saturation', currentSaturation);
+  }
+  if( !wv ) {
+    return;
+  }
+  const inject = function() {
+    // 先移除旧样式，避免多次调节后累积多条规则。
+    if( saturationCssKey !== null ) {
+      try { wv.removeInsertedCSS(saturationCssKey); } catch(err) {}
+      saturationCssKey = null;
+    }
+    // 1 为原色，无需注入；也让页面恢复浏览器默认渲染。
+    if( Math.abs(currentSaturation - 1) < 0.001 ) {
+      return;
+    }
+    wv.insertCSS(`html { filter: saturate(${currentSaturation}) !important; }`).then((key) => {
+      saturationCssKey = key;
+    }).catch((err) => {
+      utils.error(`饱和度：注入 CSS 失败\n${err}`);
+    });
+  };
+  try {
+    inject();
+  } catch(err) {
+    // dom-ready 之前 insertCSS 会抛错；只记录值，等待 did-finish-load 注入。
+    utils.log('饱和度：webview 尚未就绪，延后注入');
+  }
+}
+
+// 刷新当前 webview 页面；按钮与快捷键共用，did-finish-load 会移除 loading 遮罩。
 function reloadWebview() {
   if( !wv ) {
     return;
@@ -581,6 +623,8 @@ function initActionOnWebviewNavigate() {
     requestAnimationFrame(fitWebviewToWindow);
     // 关闭loading遮罩
     wrapper.classList.remove('loading');
+    // 导航后注入的 CSS 会随旧页面销毁，这里按当前值重新注入饱和度。
+    applySaturation(currentSaturation, false);
     // 根据url格式判断是获取普通分p还是番剧分p
     const vid = utils.getVid(url);
     if( vid ) {
@@ -698,6 +742,13 @@ function initActionOnPlaybackRateShortcut() {
   });
 }
 
+// 设置页调节饱和度后的实时应用（持久化已由主进程完成）。
+function initActionOnSaturation() {
+  ipc.on('apply-saturation', (ev, value) => {
+    applySaturation(value, false);
+  });
+}
+
 function initActionOnHistoryShortcut() {
   ipc.on('open-recent-history', () => {
     _history.go(historyUrl);
@@ -779,6 +830,11 @@ window.addEventListener('DOMContentLoaded', function() {
   wv = document.getElementById('wv');
   detectPlatform();
   checkUpdateOnInit();
+  // 启动时读取已保存的饱和度；did-finish-load 时据此注入到实际页面。
+  currentSaturation = (function() {
+    const stored = Number(utils.config.get('saturation'));
+    return Number.isFinite(stored) ? Math.max(0, Math.min(2, stored)) : 1;
+  })();
   initActionOnWebviewNavigate();
   initActionOnWebviewOpen();
   initActionOnEsc();
@@ -786,6 +842,7 @@ window.addEventListener('DOMContentLoaded', function() {
   initActionOnPlaybackShortcut();
   initActionOnWebFullscreenShortcut();
   initActionOnPlaybackRateShortcut();
+  initActionOnSaturation();
   initActionOnHistoryShortcut();
   initActionOnNavigationShortcuts();
   initActionOnPageZoomShortcut();

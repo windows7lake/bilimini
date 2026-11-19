@@ -109,6 +109,11 @@ body {
 .range:hover::-webkit-slider-thumb {
   background: #fdc1cf;
 }
+.range-value {
+  color: #fff;
+  font-weight: normal;
+  margin-left: 6px;
+}
 .range::-webkit-slider-runnable-track {
   background: #ef93a8;
   border-radius: 2px;

@@ -1,5 +1,90 @@
 const ipc = require('electron').ipcRenderer;
 
+// ===== 播放倍速记忆 =====
+// 用户调整倍速后持久化保存；下次打开或切换视频时自动恢复。
+// 通过 config-get/config-set IPC 走主进程 electron-store，与收藏共用一套存储。
+(function initPlaybackRateMemory() {
+  const KEY = 'savedPlaybackRate';
+  let remembered = null;
+  try {
+    const stored = ipc.sendSync('config-get', KEY);
+    if( typeof stored === 'number' && stored >= 0.25 && stored <= 4 ) {
+      remembered = stored;
+    }
+  } catch(err) {}
+
+  // 恢复动作本身也会触发 ratechange；此窗口内忽略，避免把程序设置误当成用户调整。
+  let suppressUntil = 0;
+  let lastVideo = null;
+
+  function saveRate(rate) {
+    if( typeof rate !== 'number' || rate < 0.25 || rate > 4 ) {
+      return;
+    }
+    remembered = rate;
+    try {
+      ipc.send('config-set', KEY, rate);
+    } catch(err) {}
+  }
+
+  function applyRemembered(video) {
+    if( remembered == null || !video ) {
+      return;
+    }
+    if( Math.abs(video.playbackRate - remembered) < 0.001 ) {
+      return;
+    }
+    suppressUntil = Date.now() + 600;
+    video.playbackRate = remembered;
+    ipc.send('webview-debug', `倍速：已恢复记忆倍速 ${remembered}`);
+  }
+
+  // ratechange 不冒泡，用捕获阶段在 document 上统一监听，覆盖快捷键和 B 站原生菜单两种调整。
+  document.addEventListener('ratechange', function(e) {
+    const video = e.target;
+    if( !video || video.tagName !== 'VIDEO' ) {
+      return;
+    }
+    if( Date.now() < suppressUntil ) {
+      return;
+    }
+    const rate = video.playbackRate;
+    saveRate(rate);
+    ipc.send('webview-debug', `倍速：用户调整倍速 ${rate}，已保存`);
+  }, true);
+
+  // B 站是 SPA，换视频时 video 元素会被替换；dirty-check 检测新元素后恢复倍速。
+  setInterval(function() {
+    const video = document.querySelector('video');
+    if( !video || video === lastVideo ) {
+      return;
+    }
+    lastVideo = video;
+    // 播放器初始化时可能把倍速重置为 1；等元数据就绪后恢复，并做一次延迟兜底。
+    const tryRestore = function(attempt) {
+      if( lastVideo !== video || remembered == null ) {
+        return;
+      }
+      // 用户已自行调过倍速（非默认值）就不覆盖其选择。
+      if( Math.abs(video.playbackRate - 1) > 0.001 ) {
+        return;
+      }
+      applyRemembered(video);
+      if( attempt < 1 ) {
+        setTimeout(function() { tryRestore(attempt + 1); }, 800);
+      }
+    };
+    if( video.readyState >= 1 ) {
+      setTimeout(function() { tryRestore(0); }, 300);
+    } else {
+      video.addEventListener('loadedmetadata', function once() {
+        video.removeEventListener('loadedmetadata', once);
+        setTimeout(function() { tryRestore(0); }, 300);
+      });
+    }
+  }, 500);
+})();
+
 // 诊断：记录页面自身（B 站 JS）发起的 window.open，用来判断「播放全部」
 // 原生逻辑到底走了哪条路径。只在 webview 顶层页面 hook 一次。
 if( window === window.top ) {
